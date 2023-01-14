@@ -28,6 +28,7 @@ impl Hram<Ristretto> for SchnorrkelHram {
     let ctx_len =
       usize::try_from(u32::from_le_bytes(m[0 .. 4].try_into().expect("malformed message")))
         .unwrap();
+
     let mut t = signing_context(&m[4 .. (4 + ctx_len)]).bytes(&m[(4 + ctx_len) ..]);
     t.proto_name(b"Schnorr-sig");
     let convert =
@@ -87,10 +88,10 @@ impl Algorithm<Ristretto> for Schnorrkel {
   fn sign_share(
     &mut self,
     params: &ThresholdView<Ristretto>,
-    nonce_sums: &[Vec<<Ristretto as Ciphersuite>::G>],
-    nonces: Vec<Zeroizing<<Ristretto as Ciphersuite>::F>>,
+    nonce_sums: &[Vec<RistrettoPoint>],
+    nonces: Vec<Zeroizing<Scalar>>,
     msg: &[u8],
-  ) -> <Ristretto as Ciphersuite>::F {
+  ) -> Scalar {
     self.msg = Some(msg.to_vec());
     self.schnorr.sign_share(
       params,
@@ -108,9 +109,9 @@ impl Algorithm<Ristretto> for Schnorrkel {
   #[must_use]
   fn verify(
     &self,
-    group_key: <Ristretto as Ciphersuite>::G,
-    nonces: &[Vec<<Ristretto as Ciphersuite>::G>],
-    sum: <Ristretto as Ciphersuite>::F,
+    group_key: RistrettoPoint,
+    nonces: &[Vec<RistrettoPoint>],
+    sum: Scalar,
   ) -> Option<Self::Signature> {
     let mut sig = (SchnorrSignature::<Ristretto> { R: nonces[0][0], s: sum }).serialize();
     sig[63] |= 1 << 7;
@@ -124,10 +125,10 @@ impl Algorithm<Ristretto> for Schnorrkel {
 
   fn verify_share(
     &self,
-    verification_share: <Ristretto as Ciphersuite>::G,
-    nonces: &[Vec<<Ristretto as Ciphersuite>::G>],
-    share: <Ristretto as Ciphersuite>::F,
-  ) -> Result<Vec<(<Ristretto as Ciphersuite>::F, <Ristretto as Ciphersuite>::G)>, ()> {
+    verification_share: RistrettoPoint,
+    nonces: &[Vec<RistrettoPoint>],
+    share: Scalar,
+  ) -> Result<Vec<(Scalar, RistrettoPoint)>, ()> {
     self.schnorr.verify_share(verification_share, nonces, share)
   }
 }
