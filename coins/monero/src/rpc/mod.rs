@@ -305,21 +305,26 @@ impl<R: RpcConnection> Rpc<R> {
   }
 
   pub async fn get_block_by_number(&self, number: usize) -> Result<Block, RpcError> {
-    match self.get_block(self.get_block_hash(number).await?).await {
-      Ok(block) => {
-        // Make sure this is actually the block for this number
-        match block.miner_tx.prefix.inputs.get(0) {
-          Some(Input::Gen(actual)) => {
-            if usize::try_from(*actual).unwrap() == number {
-              Ok(block)
-            } else {
-              Err(RpcError::InvalidNode)
-            }
-          }
-          _ => Err(RpcError::InvalidNode),
+    #[derive(Deserialize, Debug)]
+    struct BlockResponse {
+      blob: String,
+    }
+
+    let res: BlockResponse =
+      self.json_rpc_call("get_block", Some(json!({ "height": number }))).await?;
+    let block =
+      Block::read::<&[u8]>(&mut rpc_hex(&res.blob)?.as_ref()).map_err(|_| RpcError::InvalidNode)?;
+
+    // Make sure this is actually the block for this number
+    match block.miner_tx.prefix.inputs.get(0) {
+      Some(Input::Gen(actual)) => {
+        if usize::try_from(*actual).unwrap() == number {
+          Ok(block)
+        } else {
+          Err(RpcError::InvalidNode)
         }
       }
-      e => e,
+      _ => Err(RpcError::InvalidNode),
     }
   }
 
