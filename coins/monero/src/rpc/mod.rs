@@ -151,7 +151,8 @@ impl<R: RpcConnection> Rpc<R> {
 
     match serde_json::from_str::<Response>(&ret) {
         Ok(ret) => Ok(ret),
-       Err(e) => {println!("{}", ret);
+       Err(e) => {
+         println!("{:?}, {}", self, ret);
          Err(RpcError::InternalError2(e.to_string()))
        },
     }
