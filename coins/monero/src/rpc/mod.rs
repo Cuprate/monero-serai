@@ -57,6 +57,8 @@ struct TransactionsResponse {
 pub enum RpcError {
   #[cfg_attr(feature = "std", error("internal error ({0})"))]
   InternalError(&'static str),
+  #[cfg_attr(feature = "std", error("internal error ({0})"))]
+  InternalError2(String),
   #[cfg_attr(feature = "std", error("connection error"))]
   ConnectionError,
   #[cfg_attr(feature = "std", error("invalid node"))]
@@ -145,9 +147,9 @@ impl<R: RpcConnection> Rpc<R> {
           )
           .await?,
       )
-      .map_err(|_| RpcError::InvalidNode)?,
+          .map_err(|e| RpcError::InternalError2(e.to_string()))?,
     )
-    .map_err(|_| RpcError::InvalidNode)
+    .map_err(|e| RpcError::InternalError2(e.to_string()))
   }
 
   /// Perform a JSON-RPC call with the specified method with the provided parameters
@@ -313,7 +315,7 @@ impl<R: RpcConnection> Rpc<R> {
     let res: BlockResponse =
       self.json_rpc_call("get_block", Some(json!({ "height": number }))).await?;
     let block =
-      Block::read::<&[u8]>(&mut rpc_hex(&res.blob)?.as_ref()).map_err(|_| RpcError::InvalidNode)?;
+      Block::read::<&[u8]>(&mut rpc_hex(&res.blob)?.as_ref()).map_err(|e| RpcError::InternalError2(e.to_string()))?;
 
     // Make sure this is actually the block for this number
     match block.miner_tx.prefix.inputs.get(0) {
@@ -321,10 +323,10 @@ impl<R: RpcConnection> Rpc<R> {
         if usize::try_from(*actual).unwrap() == number {
           Ok(block)
         } else {
-          Err(RpcError::InvalidNode)
+          Err(RpcError::InternalError("node sent wrong block"))
         }
       }
-      _ => Err(RpcError::InvalidNode),
+      _ => Err(RpcError::InternalError("node sent block with invalid miner tx")),
     }
   }
 

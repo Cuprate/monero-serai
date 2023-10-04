@@ -57,20 +57,20 @@ impl RpcConnection for HttpRpc {
     let mut builder = self.client.post(self.url.clone() + "/" + route).body(body);
 
     if let Some((user, pass)) = &self.userpass {
-      let req = self.client.post(&self.url).send().await.map_err(|_| RpcError::InvalidNode)?;
+      let req = self.client.post(&self.url).send().await.map_err(|e| RpcError::InternalError2(e.to_string()))?;
       // Only provide authentication if this daemon actually expects it
       if let Some(header) = req.headers().get("www-authenticate") {
         builder = builder.header(
           "Authorization",
-          digest_auth::parse(header.to_str().map_err(|_| RpcError::InvalidNode)?)
-            .map_err(|_| RpcError::InvalidNode)?
+          digest_auth::parse(header.to_str().map_err(|e| RpcError::InternalError2(e.to_string()))?)
+              .map_err(|e| RpcError::InternalError2(e.to_string()))?
             .respond(&AuthContext::new_post::<_, _, _, &[u8]>(
               user,
               pass,
               "/".to_string() + route,
               None,
             ))
-            .map_err(|_| RpcError::InvalidNode)?
+              .map_err(|e| RpcError::InternalError2(e.to_string()))?
             .to_header_string(),
         );
       }
@@ -80,10 +80,10 @@ impl RpcConnection for HttpRpc {
       builder
         .send()
         .await
-        .map_err(|_| RpcError::ConnectionError)?
+          .map_err(|e| RpcError::InternalError2(e.to_string()))?
         .bytes()
         .await
-        .map_err(|_| RpcError::ConnectionError)?
+          .map_err(|e| RpcError::InternalError2(e.to_string()))?
         .slice(..)
         .to_vec(),
     )
