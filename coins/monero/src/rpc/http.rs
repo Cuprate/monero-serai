@@ -57,12 +57,14 @@ impl RpcConnection for HttpRpc {
     let mut builder = self.client.post(self.url.clone() + "/" + route).body(body);
 
     if let Some((user, pass)) = &self.userpass {
-      let req = self.client.post(&self.url).send().await.map_err(|e| RpcError::InternalError2(e.to_string()))?;
+      let req = self.client.post(&self.url).send().await
+          .map_err(|e| RpcError::InternalError2(e.to_string()))?;
       // Only provide authentication if this daemon actually expects it
       if let Some(header) = req.headers().get("www-authenticate") {
         builder = builder.header(
           "Authorization",
-          digest_auth::parse(header.to_str().map_err(|e| RpcError::InternalError2(e.to_string()))?)
+          digest_auth::parse(header.to_str()
+              .map_err(|e| RpcError::InternalError2(e.to_string()))?)
               .map_err(|e| RpcError::InternalError2(e.to_string()))?
             .respond(&AuthContext::new_post::<_, _, _, &[u8]>(
               user,

@@ -133,9 +133,8 @@ impl<R: RpcConnection> Rpc<R> {
     route: &str,
     params: Option<Params>,
   ) -> Result<Response, RpcError> {
-    serde_json::from_str(
-      std_shims::str::from_utf8(
-        &self
+    let ret = std_shims::str::from_utf8(
+      self
           .0
           .post(
             route,
@@ -145,11 +144,17 @@ impl<R: RpcConnection> Rpc<R> {
               vec![]
             },
           )
-          .await?,
-      )
-          .map_err(|e| RpcError::InternalError2(e.to_string()))?,
+          .await?
+          .as_slice(),
     )
-    .map_err(|e| RpcError::InternalError2(e.to_string()))
+        .map_err(|e| RpcError::InternalError2(e.to_string()))?.to_string();
+
+    match serde_json::from_str::<Response>(&ret) {
+        Ok(ret) => Ok(ret),
+       Err(e) => {println!("{}", ret);
+         Err(RpcError::InternalError2(e.to_string()))
+       },
+    }
   }
 
   /// Perform a JSON-RPC call with the specified method with the provided parameters
