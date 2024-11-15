@@ -6,13 +6,12 @@ use crate::primitives::keccak256;
 /// https://github.com/monero-project/monero/blob/893916ad091a92e765ce3241b94e706ad012b62a
 ///   /src/crypto/tree-hash.c#L62
 ///
-/// # Panics
-/// This function will panic if the tree is empty.
-pub fn merkle_root(mut leafs: Vec<[u8; 32]>) -> [u8; 32] {
+/// This function returns [`None`] if the tree is empty.
+pub fn merkle_root(mut leafs: Vec<[u8; 32]>) -> Option<[u8; 32]> {
   match leafs.len() {
-    0 => panic!("Can't compute Merkle root for empty tree"),
-    1 => leafs[0],
-    2 => keccak256([leafs[0], leafs[1]].concat()),
+    0 => None,
+    1 => Some(leafs[0]),
+    2 => Some(keccak256([leafs[0], leafs[1]].concat())),
     _ => {
       // Monero preprocess this so the length is a power of 2
       let mut high_pow_2 = 4; // 4 is the lowest value this can be
@@ -52,7 +51,7 @@ pub fn merkle_root(mut leafs: Vec<[u8; 32]>) -> [u8; 32] {
         leafs = new_hashes;
         new_hashes = Vec::with_capacity(leafs.len() / 2);
       }
-      leafs[0]
+      Some(leafs[0])
     }
   }
 }
