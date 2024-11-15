@@ -126,7 +126,7 @@ impl Block {
     transactions.push(self.miner_transaction.hash());
     transactions.extend_from_slice(&self.transactions);
 
-    blob.extend_from_slice(&merkle_root(&transactions));
+    blob.extend_from_slice(&merkle_root(transactions));
     write_varint(&(1 + self.transactions.len()), &mut blob).unwrap();
     blob
   }

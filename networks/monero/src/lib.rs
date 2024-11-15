@@ -7,7 +7,7 @@ pub use monero_io as io;
 pub use monero_generators as generators;
 pub use monero_primitives as primitives;
 
-/// Merkel tree functionality.
+/// Merkle tree functionality.
 pub mod merkle;
 
 /// Ring Signature structs and functionality.
