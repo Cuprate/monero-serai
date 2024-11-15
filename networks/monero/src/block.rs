@@ -121,8 +121,13 @@ impl Block {
   /// use the [`Block::hash`] function.
   pub fn serialize_pow_hash(&self) -> Vec<u8> {
     let mut blob = self.header.serialize();
-    blob.extend_from_slice(&merkle_root(self.miner_transaction.hash(), &self.transactions));
-    write_varint(&(1 + u64::try_from(self.transactions.len()).unwrap()), &mut blob).unwrap();
+
+    let mut transactions = Vec::with_capacity(self.transactions.len() + 1);
+    transactions.push(self.miner_transaction.hash());
+    transactions.extend_from_slice(&self.transactions);
+
+    blob.extend_from_slice(&merkle_root(&transactions));
+    write_varint(&(1 + self.transactions.len()), &mut blob).unwrap();
     blob
   }
 
@@ -132,7 +137,7 @@ impl Block {
     // Monero pre-appends a VarInt of the block-to-hash'ss length before getting the block hash,
     // but doesn't do this when getting the proof of work hash :)
     let mut hashing_blob = Vec::with_capacity(9 + hashable.len());
-    write_varint(&u64::try_from(hashable.len()).unwrap(), &mut hashing_blob).unwrap();
+    write_varint(&hashable.len(), &mut hashing_blob).unwrap();
     hashing_blob.append(&mut hashable);
 
     let hash = keccak256(hashing_blob);

@@ -2,14 +2,13 @@ use std_shims::vec::Vec;
 
 use crate::primitives::keccak256;
 
-pub(crate) fn merkle_root(root: [u8; 32], leafs: &[[u8; 32]]) -> [u8; 32] {
+/// Calculates the merkel root of the given tree. Equivalent to `tree_hash` in monero-core.
+pub fn merkle_root(leafs: &[[u8; 32]]) -> [u8; 32] {
   match leafs.len() {
-    0 => root,
-    1 => keccak256([root, leafs[0]].concat()),
+    1 => leafs[0],
+    2 => keccak256([leafs[0], leafs[1]].concat()),
     _ => {
-      let mut hashes = Vec::with_capacity(1 + leafs.len());
-      hashes.push(root);
-      hashes.extend(leafs);
+      let mut hashes = leafs.to_vec();
 
       // Monero preprocess this so the length is a power of 2
       let mut high_pow_2 = 4; // 4 is the lowest value this can be
