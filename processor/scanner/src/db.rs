@@ -81,8 +81,6 @@ create_db!(
     ActiveKeys: <K: Borshy>() -> Vec<SeraiKeyDbEntry<K>>,
     RetireAt: <K: Encode>(key: K) -> u64,
 
-    // The next block to potentially report
-    NextToPotentiallyReportBlock: () -> u64,
     // Highest acknowledged block
     HighestAcknowledgedBlock: () -> u64,
 
@@ -277,10 +275,6 @@ impl<S: ScannerFeed> ScannerGlobalDb<S> {
     blocks in which we receive outputs is notable).
   */
   pub(crate) fn flag_notable_due_to_non_external_output(txn: &mut impl DbTxn, block_number: u64) {
-    assert!(
-      NextToPotentiallyReportBlock::get(txn).unwrap() <= block_number,
-      "already potentially reported a block we're only now flagging as notable"
-    );
     NotableBlock::set(txn, block_number, &());
   }
 
