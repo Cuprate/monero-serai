@@ -7,8 +7,9 @@ use scale::{Encode, Decode, IoReader};
 use borsh::{BorshSerialize, BorshDeserialize};
 use serai_db::{Get, DbTxn, create_db, db_channel};
 
-use serai_in_instructions_primitives::{InInstructionWithBalance, Batch};
 use serai_coins_primitives::OutInstructionWithBalance;
+use serai_validator_sets_primitives::Session;
+use serai_in_instructions_primitives::{InInstructionWithBalance, Batch};
 
 use primitives::{EncodableG, ReceivedOutput};
 
@@ -25,11 +26,13 @@ impl<T: BorshSerialize + BorshDeserialize> Borshy for T {}
 #[derive(BorshSerialize, BorshDeserialize)]
 struct SeraiKeyDbEntry<K: Borshy> {
   activation_block_number: u64,
+  session: Session,
   key: K,
 }
 
 #[derive(Clone)]
 pub(crate) struct SeraiKey<K> {
+  pub(crate) session: Session,
   pub(crate) key: K,
   pub(crate) stage: LifetimeStage,
   pub(crate) activation_block_number: u64,
@@ -165,7 +168,7 @@ impl<S: ScannerFeed> ScannerGlobalDb<S> {
 
     // If this new key retires a key, mark the block at which forwarding explicitly occurs notable
     // This lets us obtain synchrony over the transactions we'll make to accomplish this
-    if let Some(key_retired_by_this) = keys.last() {
+    let this_keys_session = if let Some(key_retired_by_this) = keys.last() {
       NotableBlock::set(
         txn,
         Lifetime::calculate::<S>(
@@ -182,10 +185,17 @@ impl<S: ScannerFeed> ScannerGlobalDb<S> {
         ),
         &(),
       );
-    }
+      Session(key_retired_by_this.session.0 + 1)
+    } else {
+      Session(0)
+    };
 
     // Push and save the next key
-    keys.push(SeraiKeyDbEntry { activation_block_number, key: EncodableG(key) });
+    keys.push(SeraiKeyDbEntry {
+      activation_block_number,
+      session: this_keys_session,
+      key: EncodableG(key),
+    });
     ActiveKeys::set(txn, &keys);
 
     // Now tidy the keys, ensuring this has a maximum length of 2
@@ -236,6 +246,7 @@ impl<S: ScannerFeed> ScannerGlobalDb<S> {
           raw_keys.get(i + 1).map(|key| key.activation_block_number),
         );
       keys.push(SeraiKey {
+        session: raw_keys[i].session,
         key: raw_keys[i].key.0,
         stage,
         activation_block_number: raw_keys[i].activation_block_number,
@@ -477,6 +488,7 @@ db_channel! {
 }
 
 pub(crate) struct InInstructionData<S: ScannerFeed> {
+  pub(crate) session_to_sign_batch: Session,
   pub(crate) external_key_for_session_to_sign_batch: KeyFor<S>,
   pub(crate) returnable_in_instructions: Vec<Returnable<S>>,
 }
@@ -488,7 +500,8 @@ impl<S: ScannerFeed> ScanToReportDb<S> {
     block_number: u64,
     data: &InInstructionData<S>,
   ) {
-    let mut buf = data.external_key_for_session_to_sign_batch.to_bytes().as_ref().to_vec();
+    let mut buf = data.session_to_sign_batch.encode();
+    buf.extend(data.external_key_for_session_to_sign_batch.to_bytes().as_ref());
     for returnable_in_instruction in &data.returnable_in_instructions {
       returnable_in_instruction.write(&mut buf).unwrap();
     }
@@ -510,6 +523,7 @@ impl<S: ScannerFeed> ScanToReportDb<S> {
     );
     let mut buf = data.returnable_in_instructions.as_slice();
 
+    let session_to_sign_batch = Session::decode(&mut buf).unwrap();
     let external_key_for_session_to_sign_batch = {
       let mut external_key_for_session_to_sign_batch =
         <KeyFor<S> as GroupEncoding>::Repr::default();
@@ -523,7 +537,11 @@ impl<S: ScannerFeed> ScanToReportDb<S> {
     while !buf.is_empty() {
       returnable_in_instructions.push(Returnable::read(&mut buf).unwrap());
     }
-    InInstructionData { external_key_for_session_to_sign_batch, returnable_in_instructions }
+    InInstructionData {
+      session_to_sign_batch,
+      external_key_for_session_to_sign_batch,
+      returnable_in_instructions,
+    }
   }
 }
 

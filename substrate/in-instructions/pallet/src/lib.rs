@@ -89,12 +89,6 @@ pub mod pallet {
   #[pallet::storage]
   pub(crate) type Halted<T: Config> = StorageMap<_, Identity, NetworkId, (), OptionQuery>;
 
-  // The latest block a network has acknowledged as finalized
-  #[pallet::storage]
-  #[pallet::getter(fn latest_network_block)]
-  pub(crate) type LatestNetworkBlock<T: Config> =
-    StorageMap<_, Identity, NetworkId, BlockHash, OptionQuery>;
-
   impl<T: Config> Pallet<T> {
     // Use a dedicated transaction layer when executing this InInstruction
     // This lets it individually error without causing any storage modifications
@@ -262,11 +256,9 @@ pub mod pallet {
 
       let batch = batch.batch;
 
-      LatestNetworkBlock::<T>::insert(batch.network, batch.block);
       Self::deposit_event(Event::Batch {
         network: batch.network,
         id: batch.id,
-        block: batch.block,
         instructions_hash: blake2_256(&batch.instructions.encode()),
       });
       for (i, instruction) in batch.instructions.into_iter().enumerate() {

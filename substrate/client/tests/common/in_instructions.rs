@@ -52,7 +52,6 @@ pub async fn provide_batch(serai: &Serai, batch: Batch) -> [u8; 32] {
     vec![InInstructionsEvent::Batch {
       network: batch.network,
       id: batch.id,
-      block: batch.block,
       instructions_hash: Blake2b::<U32>::digest(batch.instructions.encode()).into(),
     }],
   );

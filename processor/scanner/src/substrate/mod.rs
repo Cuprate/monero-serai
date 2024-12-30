@@ -3,6 +3,7 @@ use core::{marker::PhantomData, future::Future};
 use serai_db::{DbTxn, Db};
 
 use serai_coins_primitives::{OutInstruction, OutInstructionWithBalance};
+use serai_validator_sets_primitives::Session;
 
 use primitives::task::ContinuallyRan;
 use crate::{
@@ -16,6 +17,8 @@ use db::*;
 pub(crate) fn queue_acknowledge_batch<S: ScannerFeed>(
   txn: &mut impl DbTxn,
   batch_id: u32,
+  publisher: Session,
+  in_instructions_hash: [u8; 32],
   in_instruction_results: Vec<messages::substrate::InInstructionResult>,
   burns: Vec<OutInstructionWithBalance>,
   key_to_activate: Option<KeyFor<S>>,
@@ -23,6 +26,8 @@ pub(crate) fn queue_acknowledge_batch<S: ScannerFeed>(
   SubstrateDb::<S>::queue_acknowledge_batch(
     txn,
     batch_id,
+    publisher,
+    in_instructions_hash,
     in_instruction_results,
     burns,
     key_to_activate,
@@ -67,17 +72,31 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SubstrateTask<D, S> {
         match action {
           Action::AcknowledgeBatch(AcknowledgeBatch {
             batch_id,
+            publisher,
+            in_instructions_hash,
             in_instruction_results,
             mut burns,
             key_to_activate,
           }) => {
             // Check if we have the information for this batch
-            let Some(block_number) = report::take_block_number_for_batch::<S>(&mut txn, batch_id)
+            let Some(report::BatchInfo {
+              block_number,
+              publisher: expected_publisher,
+              in_instructions_hash: expected_in_instructions_hash,
+            }) = report::take_info_for_batch::<S>(&mut txn, batch_id)
             else {
               // If we don't, drop this txn (restoring the action to the database)
               drop(txn);
               return Ok(made_progress);
             };
+            assert_eq!(
+              publisher, expected_publisher,
+              "batch acknowledged on-chain was acknowledged by an unexpected publisher"
+            );
+            assert_eq!(
+              in_instructions_hash, expected_in_instructions_hash,
+              "batch acknowledged on-chain was distinct"
+            );
 
             {
               let external_key_for_session_to_sign_batch =

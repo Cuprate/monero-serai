@@ -13,13 +13,6 @@ const PALLET: &str = "InInstructions";
 #[derive(Clone, Copy)]
 pub struct SeraiInInstructions<'a>(pub(crate) &'a TemporalSerai<'a>);
 impl<'a> SeraiInInstructions<'a> {
-  pub async fn latest_block_for_network(
-    &self,
-    network: NetworkId,
-  ) -> Result<Option<BlockHash>, SeraiError> {
-    self.0.storage(PALLET, "LatestNetworkBlock", network).await
-  }
-
   pub async fn last_batch_for_network(
     &self,
     network: NetworkId,

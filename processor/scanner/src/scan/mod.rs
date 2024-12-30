@@ -349,6 +349,7 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for ScanTask<D, S> {
           &mut txn,
           b,
           &InInstructionData {
+            session_to_sign_batch: keys[0].session,
             external_key_for_session_to_sign_batch: keys[0].key,
             returnable_in_instructions: in_instructions,
           },

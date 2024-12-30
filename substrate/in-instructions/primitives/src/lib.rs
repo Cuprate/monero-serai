@@ -19,8 +19,7 @@ use sp_application_crypto::sr25519::Signature;
 use sp_std::vec::Vec;
 use sp_runtime::RuntimeDebug;
 
-#[rustfmt::skip]
-use serai_primitives::{BlockHash, Balance, NetworkId, SeraiAddress, ExternalAddress, system_address};
+use serai_primitives::{Balance, NetworkId, SeraiAddress, ExternalAddress, system_address};
 
 mod shorthand;
 pub use shorthand::*;
@@ -107,7 +106,6 @@ pub struct InInstructionWithBalance {
 pub struct Batch {
   pub network: NetworkId,
   pub id: u32,
-  pub block: BlockHash,
   pub instructions: Vec<InInstructionWithBalance>,
 }
 

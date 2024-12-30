@@ -280,7 +280,13 @@ pub async fn main_loop<
           // Substrate sets this limit to prevent DoSs from malicious validator sets
           // That bound lets us consume this txn in the following loop body, as an optimization
           assert!(batches.len() <= 1);
-          for messages::substrate::ExecutedBatch { id, in_instructions } in batches {
+          for messages::substrate::ExecutedBatch {
+            id,
+            publisher,
+            in_instructions_hash,
+            in_instruction_results,
+          } in batches
+          {
             let key_to_activate =
               KeyToActivate::<KeyFor<S>>::try_recv(txn.as_mut().unwrap()).map(|key| key.0);
 
@@ -288,7 +294,9 @@ pub async fn main_loop<
             let _: () = scanner.acknowledge_batch(
               txn.take().unwrap(),
               id,
-              in_instructions,
+              publisher,
+              in_instructions_hash,
+              in_instruction_results,
               /*
                 `acknowledge_batch` takes burns to optimize handling returns with standard
                 payments. That's why handling these with a Batch (and not waiting until the

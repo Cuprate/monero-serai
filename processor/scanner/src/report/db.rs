@@ -8,8 +8,16 @@ use borsh::{BorshSerialize, BorshDeserialize};
 use serai_db::{Get, DbTxn, create_db};
 
 use serai_primitives::Balance;
+use serai_validator_sets_primitives::Session;
 
 use crate::{ScannerFeed, KeyFor, AddressFor};
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub(crate) struct BatchInfo {
+  pub(crate) block_number: u64,
+  pub(crate) publisher: Session,
+  pub(crate) in_instructions_hash: [u8; 32],
+}
 
 create_db!(
   ScannerReport {
@@ -18,10 +26,11 @@ create_db!(
     // The next Batch ID to use
     NextBatchId: () -> u32,
 
-    // The block number which caused a batch
-    BlockNumberForBatch: (batch: u32) -> u64,
+    // The information needed to verify a batch
+    InfoForBatch: (batch: u32) -> BatchInfo,
 
     // The external key for the session which should sign a batch
+    // TODO: Merge this with InfoForBatch
     ExternalKeyForSessionToSignBatch: (batch: u32) -> Vec<u8>,
 
     // The return addresses for the InInstructions within a Batch
@@ -46,15 +55,24 @@ impl<S: ScannerFeed> ReportDb<S> {
     NextToPotentiallyReportBlock::get(getter)
   }
 
-  pub(crate) fn acquire_batch_id(txn: &mut impl DbTxn, block_number: u64) -> u32 {
+  pub(crate) fn acquire_batch_id(txn: &mut impl DbTxn) -> u32 {
     let id = NextBatchId::get(txn).unwrap_or(0);
     NextBatchId::set(txn, &(id + 1));
-    BlockNumberForBatch::set(txn, id, &block_number);
     id
   }
 
-  pub(crate) fn take_block_number_for_batch(txn: &mut impl DbTxn, id: u32) -> Option<u64> {
-    BlockNumberForBatch::take(txn, id)
+  pub(crate) fn save_batch_info(
+    txn: &mut impl DbTxn,
+    id: u32,
+    block_number: u64,
+    publisher: Session,
+    in_instructions_hash: [u8; 32],
+  ) {
+    InfoForBatch::set(txn, id, &BatchInfo { block_number, publisher, in_instructions_hash });
+  }
+
+  pub(crate) fn take_info_for_batch(txn: &mut impl DbTxn, id: u32) -> Option<BatchInfo> {
+    InfoForBatch::take(txn, id)
   }
 
   pub(crate) fn save_external_key_for_session_to_sign_batch(

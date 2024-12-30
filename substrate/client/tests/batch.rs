@@ -25,9 +25,6 @@ serai_test!(
     let network = NetworkId::Bitcoin;
     let id = 0;
 
-    let mut block_hash = BlockHash([0; 32]);
-    OsRng.fill_bytes(&mut block_hash.0);
-
     let mut address = SeraiAddress::new([0; 32]);
     OsRng.fill_bytes(&mut address.0);
 
@@ -38,7 +35,6 @@ serai_test!(
     let batch = Batch {
       network,
       id,
-      block: block_hash,
       instructions: vec![InInstructionWithBalance {
         instruction: InInstruction::Transfer(address),
         balance,
@@ -50,15 +46,12 @@ serai_test!(
     let serai = serai.as_of(block);
     {
       let serai = serai.in_instructions();
-      let latest_finalized = serai.latest_block_for_network(network).await.unwrap();
-      assert_eq!(latest_finalized, Some(block_hash));
       let batches = serai.batch_events().await.unwrap();
       assert_eq!(
         batches,
         vec![InInstructionsEvent::Batch {
           network,
           id,
-          block: block_hash,
           instructions_hash: Blake2b::<U32>::digest(batch.instructions.encode()).into(),
         }]
       );

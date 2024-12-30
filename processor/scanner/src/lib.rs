@@ -11,6 +11,7 @@ use borsh::{BorshSerialize, BorshDeserialize};
 use serai_db::{Get, DbTxn, Db};
 
 use serai_primitives::{NetworkId, Coin, Amount};
+use serai_validator_sets_primitives::Session;
 use serai_coins_primitives::OutInstructionWithBalance;
 
 use primitives::{task::*, Address, ReceivedOutput, Block, Payment};
@@ -437,10 +438,13 @@ impl<S: ScannerFeed> Scanner<S> {
   /// `queue_burns`. Doing so will cause them to be executed multiple times.
   ///
   /// The calls to this function must be ordered with regards to `queue_burns`.
+  #[allow(clippy::too_many_arguments)]
   pub fn acknowledge_batch(
     &mut self,
     mut txn: impl DbTxn,
     batch_id: u32,
+    publisher: Session,
+    in_instructions_hash: [u8; 32],
     in_instruction_results: Vec<messages::substrate::InInstructionResult>,
     burns: Vec<OutInstructionWithBalance>,
     key_to_activate: Option<KeyFor<S>>,
@@ -451,6 +455,8 @@ impl<S: ScannerFeed> Scanner<S> {
     substrate::queue_acknowledge_batch::<S>(
       &mut txn,
       batch_id,
+      publisher,
+      in_instructions_hash,
       in_instruction_results,
       burns,
       key_to_activate,
