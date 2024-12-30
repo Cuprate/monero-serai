@@ -23,13 +23,13 @@ pub use lifetime::LifetimeStage;
 // Database schema definition and associated functions.
 mod db;
 use db::ScannerGlobalDb;
-pub use db::{Batches, BatchesToSign, AcknowledgedBatches, CompletedEventualities};
+pub use db::{BatchesToSign, AcknowledgedBatches, CompletedEventualities};
 // Task to index the blockchain, ensuring we don't reorganize finalized blocks.
 mod index;
 // Scans blocks for received coins.
 mod scan;
-/// Task which reports Batches to Substrate.
-mod report;
+/// Task which creates Batches for Substrate.
+mod batch;
 /// Task which handles events from Substrate once we can.
 mod substrate;
 /// Check blocks for transactions expected to eventually occur.
@@ -379,24 +379,24 @@ impl<S: ScannerFeed> Scanner<S> {
 
     let index_task = index::IndexTask::new(db.clone(), feed.clone(), start_block).await;
     let scan_task = scan::ScanTask::new(db.clone(), feed.clone(), start_block);
-    let report_task = report::ReportTask::<_, S>::new(db.clone(), start_block);
+    let batch_task = batch::BatchTask::<_, S>::new(db.clone(), start_block);
     let substrate_task = substrate::SubstrateTask::<_, S>::new(db.clone());
     let eventuality_task =
       eventuality::EventualityTask::<_, _, _>::new(db, feed, scheduler, start_block);
 
     let (index_task_def, _index_handle) = Task::new();
     let (scan_task_def, scan_handle) = Task::new();
-    let (report_task_def, report_handle) = Task::new();
+    let (batch_task_def, batch_handle) = Task::new();
     let (substrate_task_def, substrate_handle) = Task::new();
     let (eventuality_task_def, eventuality_handle) = Task::new();
 
     // Upon indexing a new block, scan it
     tokio::spawn(index_task.continually_run(index_task_def, vec![scan_handle.clone()]));
-    // Upon scanning a block, report it
-    tokio::spawn(scan_task.continually_run(scan_task_def, vec![report_handle]));
-    // Upon reporting a block, we do nothing (as the burden is on Substrate which won't be
-    // immediately ready)
-    tokio::spawn(report_task.continually_run(report_task_def, vec![]));
+    // Upon scanning a block, creates the batches for it
+    tokio::spawn(scan_task.continually_run(scan_task_def, vec![batch_handle]));
+    // Upon creating batches for a block, we do nothing (as the burden is on Substrate which won't
+    // be immediately ready)
+    tokio::spawn(batch_task.continually_run(batch_task_def, vec![]));
     // Upon handling an event from Substrate, we run the Eventuality task (as it's what's affected)
     tokio::spawn(substrate_task.continually_run(substrate_task_def, vec![eventuality_handle]));
     // Upon handling the Eventualities in a block, we run the scan task as we've advanced the

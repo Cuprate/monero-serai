@@ -5,11 +5,10 @@ use group::GroupEncoding;
 
 use scale::{Encode, Decode, IoReader};
 use borsh::{BorshSerialize, BorshDeserialize};
-use serai_db::{Get, DbTxn, create_db, db_channel};
+use serai_db::{Get, DbTxn, create_db};
 
 use serai_primitives::Balance;
 use serai_validator_sets_primitives::Session;
-use serai_in_instructions_primitives::Batch;
 
 use primitives::EncodableG;
 use crate::{ScannerFeed, KeyFor, AddressFor};
@@ -23,9 +22,9 @@ pub(crate) struct BatchInfo<K: BorshSerialize> {
 }
 
 create_db!(
-  ScannerReport {
-    // The next block to potentially report
-    NextToPotentiallyReportBlock: () -> u64,
+  ScannerBatch {
+    // The next block to create batches for
+    NextBlockToBatch: () -> u64,
 
     // The last session to sign a Batch and their first Batch signed
     LastSessionToSignBatchAndFirstBatch: () -> (Session, u32),
@@ -41,19 +40,13 @@ create_db!(
   }
 );
 
-db_channel!(
-  ScannerReport {
-    InternalBatches: <G: GroupEncoding>() -> (Session, EncodableG<G>, Batch),
-  }
-);
-
 pub(crate) struct ReturnInformation<S: ScannerFeed> {
   pub(crate) address: AddressFor<S>,
   pub(crate) balance: Balance,
 }
 
-pub(crate) struct ReportDb<S: ScannerFeed>(PhantomData<S>);
-impl<S: ScannerFeed> ReportDb<S> {
+pub(crate) struct BatchDb<S: ScannerFeed>(PhantomData<S>);
+impl<S: ScannerFeed> BatchDb<S> {
   pub(crate) fn set_last_session_to_sign_batch_and_first_batch(
     txn: &mut impl DbTxn,
     session: Session,
@@ -67,14 +60,11 @@ impl<S: ScannerFeed> ReportDb<S> {
     LastSessionToSignBatchAndFirstBatch::get(getter)
   }
 
-  pub(crate) fn set_next_to_potentially_report_block(
-    txn: &mut impl DbTxn,
-    next_to_potentially_report_block: u64,
-  ) {
-    NextToPotentiallyReportBlock::set(txn, &next_to_potentially_report_block);
+  pub(crate) fn set_next_block_to_batch(txn: &mut impl DbTxn, next_block_to_batch: u64) {
+    NextBlockToBatch::set(txn, &next_block_to_batch);
   }
-  pub(crate) fn next_to_potentially_report_block(getter: &impl Get) -> Option<u64> {
-    NextToPotentiallyReportBlock::get(getter)
+  pub(crate) fn next_block_to_batch(getter: &impl Get) -> Option<u64> {
+    NextBlockToBatch::get(getter)
   }
 
   pub(crate) fn acquire_batch_id(txn: &mut impl DbTxn) -> u32 {

@@ -196,18 +196,6 @@ impl signers::Coordinator for CoordinatorSend {
     }
   }
 
-  fn publish_batch(
-    &mut self,
-    batch: Batch,
-  ) -> impl Send + Future<Output = Result<(), Self::EphemeralError>> {
-    async move {
-      self.send(&messages::ProcessorMessage::Substrate(
-        messages::substrate::ProcessorMessage::Batch { batch },
-      ));
-      Ok(())
-    }
-  }
-
   fn publish_signed_batch(
     &mut self,
     batch: SignedBatch,

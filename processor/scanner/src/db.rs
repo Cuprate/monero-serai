@@ -482,7 +482,7 @@ struct BlockBoundInInstructions {
 }
 
 db_channel! {
-  ScannerScanReport {
+  ScannerScanBatch {
     InInstructions: () -> BlockBoundInInstructions,
   }
 }
@@ -493,8 +493,8 @@ pub(crate) struct InInstructionData<S: ScannerFeed> {
   pub(crate) returnable_in_instructions: Vec<Returnable<S>>,
 }
 
-pub(crate) struct ScanToReportDb<S: ScannerFeed>(PhantomData<S>);
-impl<S: ScannerFeed> ScanToReportDb<S> {
+pub(crate) struct ScanToBatchDb<S: ScannerFeed>(PhantomData<S>);
+impl<S: ScannerFeed> ScanToBatchDb<S> {
   pub(crate) fn send_in_instructions(
     txn: &mut impl DbTxn,
     block_number: u64,
@@ -545,6 +545,30 @@ impl<S: ScannerFeed> ScanToReportDb<S> {
   }
 }
 
+#[derive(BorshSerialize, BorshDeserialize)]
+pub(crate) struct BatchData<K: BorshSerialize + BorshDeserialize> {
+  pub(crate) session_to_sign_batch: Session,
+  pub(crate) external_key_for_session_to_sign_batch: K,
+  pub(crate) batch: Batch,
+}
+
+db_channel! {
+  ScannerBatchReport {
+    BatchToReport: <K: Borshy>() -> BatchData<K>,
+  }
+}
+
+pub(crate) struct BatchToReportDb<S: ScannerFeed>(PhantomData<S>);
+impl<S: ScannerFeed> BatchToReportDb<S> {
+  pub(crate) fn send_batch(txn: &mut impl DbTxn, batch_data: &BatchData<EncodableG<KeyFor<S>>>) {
+    BatchToReport::send(txn, batch_data);
+  }
+
+  pub(crate) fn try_recv_batch(txn: &mut impl DbTxn) -> Option<BatchData<EncodableG<KeyFor<S>>>> {
+    BatchToReport::try_recv(txn)
+  }
+}
+
 db_channel! {
   ScannerSubstrateEventuality {
     Burns: (acknowledged_block: u64) -> Vec<OutInstructionWithBalance>,
@@ -583,26 +607,10 @@ mod _public_db {
 
   db_channel! {
     ScannerPublic {
-      Batches: () -> Batch,
       BatchesToSign: (key: &[u8]) -> Batch,
       AcknowledgedBatches: (key: &[u8]) -> u32,
       CompletedEventualities: (key: &[u8]) -> [u8; 32],
     }
-  }
-}
-
-/// The batches to publish.
-///
-/// This is used for auditing the Batches published to Serai.
-pub struct Batches;
-impl Batches {
-  pub(crate) fn send(txn: &mut impl DbTxn, batch: &Batch) {
-    _public_db::Batches::send(txn, batch);
-  }
-
-  /// Receive a batch to publish.
-  pub fn try_recv(txn: &mut impl DbTxn) -> Option<Batch> {
-    _public_db::Batches::try_recv(txn)
   }
 }
 

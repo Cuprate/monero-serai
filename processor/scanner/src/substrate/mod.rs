@@ -8,7 +8,7 @@ use serai_validator_sets_primitives::Session;
 use primitives::task::ContinuallyRan;
 use crate::{
   db::{ScannerGlobalDb, SubstrateToEventualityDb, AcknowledgedBatches},
-  report, ScannerFeed, KeyFor,
+  batch, ScannerFeed, KeyFor,
 };
 
 mod db;
@@ -82,12 +82,12 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SubstrateTask<D, S> {
             key_to_activate,
           }) => {
             // Check if we have the information for this batch
-            let Some(report::BatchInfo {
+            let Some(batch::BatchInfo {
               block_number,
               session_to_sign_batch,
               external_key_for_session_to_sign_batch,
               in_instructions_hash: expected_in_instructions_hash,
-            }) = report::take_info_for_batch::<S>(&mut txn, batch_id)
+            }) = batch::take_info_for_batch::<S>(&mut txn, batch_id)
             else {
               // If we don't, drop this txn (restoring the action to the database)
               drop(txn);
@@ -143,7 +143,7 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SubstrateTask<D, S> {
 
             // Return the balances for any InInstructions which failed to execute
             {
-              let return_information = report::take_return_information::<S>(&mut txn, batch_id)
+              let return_information = batch::take_return_information::<S>(&mut txn, batch_id)
                 .expect("didn't save the return information for Batch we published");
               assert_eq!(
               in_instruction_results.len(),
@@ -159,7 +159,7 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SubstrateTask<D, S> {
                   continue;
                 }
 
-                if let Some(report::ReturnInformation { address, balance }) = return_information {
+                if let Some(batch::ReturnInformation { address, balance }) = return_information {
                   burns.push(OutInstructionWithBalance {
                     instruction: OutInstruction { address: address.into() },
                     balance,

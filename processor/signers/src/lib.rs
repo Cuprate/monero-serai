@@ -64,12 +64,6 @@ pub trait Coordinator: 'static + Send + Sync {
     signature: Signature,
   ) -> impl Send + Future<Output = Result<(), Self::EphemeralError>>;
 
-  /// Publish a `Batch`.
-  fn publish_batch(
-    &mut self,
-    batch: Batch,
-  ) -> impl Send + Future<Output = Result<(), Self::EphemeralError>>;
-
   /// Publish a `SignedBatch`.
   fn publish_signed_batch(
     &mut self,

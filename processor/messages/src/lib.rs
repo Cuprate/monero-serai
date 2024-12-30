@@ -9,7 +9,7 @@ use dkg::Participant;
 use serai_primitives::BlockHash;
 use validator_sets_primitives::{Session, KeyPair, Slash};
 use coins_primitives::OutInstructionWithBalance;
-use in_instructions_primitives::{Batch, SignedBatch};
+use in_instructions_primitives::SignedBatch;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
 pub struct SubstrateContext {
@@ -208,9 +208,17 @@ pub mod substrate {
     },
   }
 
-  #[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
-  pub enum ProcessorMessage {
-    Batch { batch: Batch },
+  #[derive(Clone, PartialEq, Eq, Debug)]
+  pub enum ProcessorMessage {}
+  impl BorshSerialize for ProcessorMessage {
+    fn serialize<W: borsh::io::Write>(&self, _writer: &mut W) -> borsh::io::Result<()> {
+      unimplemented!()
+    }
+  }
+  impl BorshDeserialize for ProcessorMessage {
+    fn deserialize_reader<R: borsh::io::Read>(_reader: &mut R) -> borsh::io::Result<Self> {
+      unimplemented!()
+    }
   }
 }
 
@@ -383,15 +391,7 @@ impl ProcessorMessage {
         res.extend(&id);
         res
       }
-      ProcessorMessage::Substrate(msg) => {
-        let (sub, id) = match msg {
-          substrate::ProcessorMessage::Batch { batch } => (0, batch.id.encode()),
-        };
-
-        let mut res = vec![PROCESSOR_UID, TYPE_SUBSTRATE_UID, sub];
-        res.extend(&id);
-        res
-      }
+      ProcessorMessage::Substrate(_) => panic!("requesting intent for empty message type"),
     }
   }
 }

@@ -14,7 +14,7 @@ use crate::{
   lifetime::LifetimeStage,
   db::{
     OutputWithInInstruction, Returnable, SenderScanData, ScannerGlobalDb, InInstructionData,
-    ScanToReportDb, ScanToEventualityDb,
+    ScanToBatchDb, ScanToEventualityDb,
   },
   BlockExt, ScannerFeed, AddressFor, OutputFor, Return, sort_outputs,
   eventuality::latest_scannable_block,
@@ -345,7 +345,7 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for ScanTask<D, S> {
         // We need to also specify which key is responsible for signing the Batch for these, which
         // will always be the oldest key (as the new key signing the Batch signifies handover
         // acceptance)
-        ScanToReportDb::<S>::send_in_instructions(
+        ScanToBatchDb::<S>::send_in_instructions(
           &mut txn,
           b,
           &InInstructionData {
