@@ -7,7 +7,7 @@ use serai_db::{DbTxn, Db};
 
 use serai_in_instructions_primitives::{MAX_BATCH_SIZE, Batch};
 
-use primitives::task::ContinuallyRan;
+use primitives::{EncodableG, task::ContinuallyRan};
 use crate::{
   db::{Returnable, ScannerGlobalDb, InInstructionData, ScanToReportDb, Batches, BatchesToSign},
   scan::next_to_scan_for_outputs_block,
@@ -21,15 +21,8 @@ use db::ReportDb;
 pub(crate) fn take_info_for_batch<S: ScannerFeed>(
   txn: &mut impl DbTxn,
   id: u32,
-) -> Option<BatchInfo> {
+) -> Option<BatchInfo<EncodableG<KeyFor<S>>>> {
   ReportDb::<S>::take_info_for_batch(txn, id)
-}
-
-pub(crate) fn take_external_key_for_session_to_sign_batch<S: ScannerFeed>(
-  txn: &mut impl DbTxn,
-  id: u32,
-) -> Option<KeyFor<S>> {
-  ReportDb::<S>::take_external_key_for_session_to_sign_batch(txn, id)
 }
 
 pub(crate) fn take_return_information<S: ScannerFeed>(
@@ -151,12 +144,8 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for ReportTask<D, S> {
               batch.id,
               block_number,
               session_to_sign_batch,
+              external_key_for_session_to_sign_batch,
               Blake2b::<U32>::digest(batch.instructions.encode()).into(),
-            );
-            ReportDb::<S>::save_external_key_for_session_to_sign_batch(
-              &mut txn,
-              batch.id,
-              &external_key_for_session_to_sign_batch,
             );
             ReportDb::<S>::save_return_information(&mut txn, batch.id, return_information);
           }

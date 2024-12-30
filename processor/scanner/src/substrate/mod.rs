@@ -81,7 +81,8 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SubstrateTask<D, S> {
             // Check if we have the information for this batch
             let Some(report::BatchInfo {
               block_number,
-              publisher: expected_publisher,
+              session_to_sign_batch,
+              external_key_for_session_to_sign_batch,
               in_instructions_hash: expected_in_instructions_hash,
             }) = report::take_info_for_batch::<S>(&mut txn, batch_id)
             else {
@@ -90,7 +91,7 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SubstrateTask<D, S> {
               return Ok(made_progress);
             };
             assert_eq!(
-              publisher, expected_publisher,
+              publisher, session_to_sign_batch,
               "batch acknowledged on-chain was acknowledged by an unexpected publisher"
             );
             assert_eq!(
@@ -98,16 +99,11 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SubstrateTask<D, S> {
               "batch acknowledged on-chain was distinct"
             );
 
-            {
-              let external_key_for_session_to_sign_batch =
-                report::take_external_key_for_session_to_sign_batch::<S>(&mut txn, batch_id)
-                  .unwrap();
-              AcknowledgedBatches::send(
-                &mut txn,
-                &external_key_for_session_to_sign_batch,
-                batch_id,
-              );
-            }
+            AcknowledgedBatches::send(
+              &mut txn,
+              &external_key_for_session_to_sign_batch.0,
+              batch_id,
+            );
 
             // Mark we made progress and handle this
             made_progress = true;

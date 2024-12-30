@@ -10,12 +10,14 @@ use serai_db::{Get, DbTxn, create_db};
 use serai_primitives::Balance;
 use serai_validator_sets_primitives::Session;
 
+use primitives::EncodableG;
 use crate::{ScannerFeed, KeyFor, AddressFor};
 
 #[derive(BorshSerialize, BorshDeserialize)]
-pub(crate) struct BatchInfo {
+pub(crate) struct BatchInfo<K: BorshSerialize> {
   pub(crate) block_number: u64,
-  pub(crate) publisher: Session,
+  pub(crate) session_to_sign_batch: Session,
+  pub(crate) external_key_for_session_to_sign_batch: K,
   pub(crate) in_instructions_hash: [u8; 32],
 }
 
@@ -27,11 +29,7 @@ create_db!(
     NextBatchId: () -> u32,
 
     // The information needed to verify a batch
-    InfoForBatch: (batch: u32) -> BatchInfo,
-
-    // The external key for the session which should sign a batch
-    // TODO: Merge this with InfoForBatch
-    ExternalKeyForSessionToSignBatch: (batch: u32) -> Vec<u8>,
+    InfoForBatch: <G: GroupEncoding>(batch: u32) -> BatchInfo<EncodableG<G>>,
 
     // The return addresses for the InInstructions within a Batch
     SerializedReturnAddresses: (batch: u32) -> Vec<u8>,
@@ -65,37 +63,27 @@ impl<S: ScannerFeed> ReportDb<S> {
     txn: &mut impl DbTxn,
     id: u32,
     block_number: u64,
-    publisher: Session,
+    session_to_sign_batch: Session,
+    external_key_for_session_to_sign_batch: KeyFor<S>,
     in_instructions_hash: [u8; 32],
   ) {
-    InfoForBatch::set(txn, id, &BatchInfo { block_number, publisher, in_instructions_hash });
-  }
-
-  pub(crate) fn take_info_for_batch(txn: &mut impl DbTxn, id: u32) -> Option<BatchInfo> {
-    InfoForBatch::take(txn, id)
-  }
-
-  pub(crate) fn save_external_key_for_session_to_sign_batch(
-    txn: &mut impl DbTxn,
-    id: u32,
-    external_key_for_session_to_sign_batch: &KeyFor<S>,
-  ) {
-    ExternalKeyForSessionToSignBatch::set(
+    InfoForBatch::set(
       txn,
       id,
-      &external_key_for_session_to_sign_batch.to_bytes().as_ref().to_vec(),
+      &BatchInfo {
+        block_number,
+        session_to_sign_batch,
+        external_key_for_session_to_sign_batch: EncodableG(external_key_for_session_to_sign_batch),
+        in_instructions_hash,
+      },
     );
   }
 
-  pub(crate) fn take_external_key_for_session_to_sign_batch(
+  pub(crate) fn take_info_for_batch(
     txn: &mut impl DbTxn,
     id: u32,
-  ) -> Option<KeyFor<S>> {
-    ExternalKeyForSessionToSignBatch::get(txn, id).map(|key_vec| {
-      let mut key = <KeyFor<S> as GroupEncoding>::Repr::default();
-      key.as_mut().copy_from_slice(&key_vec);
-      KeyFor::<S>::from_bytes(&key).unwrap()
-    })
+  ) -> Option<BatchInfo<EncodableG<KeyFor<S>>>> {
+    InfoForBatch::take(txn, id)
   }
 
   pub(crate) fn save_return_information(
