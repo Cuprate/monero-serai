@@ -84,7 +84,7 @@ pub mod sign {
   pub enum VariantSignId {
     Cosign(u64),
     Batch(u32),
-    SlashReport(Session),
+    SlashReport,
     Transaction([u8; 32]),
   }
   impl fmt::Debug for VariantSignId {
@@ -94,9 +94,7 @@ pub mod sign {
           f.debug_struct("VariantSignId::Cosign").field("0", &cosign).finish()
         }
         Self::Batch(batch) => f.debug_struct("VariantSignId::Batch").field("0", &batch).finish(),
-        Self::SlashReport(session) => {
-          f.debug_struct("VariantSignId::SlashReport").field("0", &session).finish()
-        }
+        Self::SlashReport => f.debug_struct("VariantSignId::SlashReport").finish(),
         Self::Transaction(tx) => {
           f.debug_struct("VariantSignId::Transaction").field("0", &hex::encode(tx)).finish()
         }
@@ -189,7 +187,9 @@ pub mod substrate {
   #[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
   pub struct ExecutedBatch {
     pub id: u32,
-    pub in_instructions: Vec<InInstructionResult>,
+    pub publisher: Session,
+    pub in_instructions_hash: [u8; 32],
+    pub in_instruction_results: Vec<InInstructionResult>,
   }
 
   #[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
@@ -197,6 +197,8 @@ pub mod substrate {
     /// Keys set on the Serai blockchain.
     SetKeys { serai_time: u64, session: Session, key_pair: KeyPair },
     /// Slashes reported on the Serai blockchain OR the process timed out.
+    ///
+    /// This is the final message for a session,
     SlashesReported { session: Session },
     /// A block from Serai with relevance to this processor.
     Block {

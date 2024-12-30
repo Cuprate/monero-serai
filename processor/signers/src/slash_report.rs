@@ -79,8 +79,7 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SlashReportSignerTask<D, S> {
           }
         }
         let mut txn = self.db.txn();
-        for msg in self.attempt_manager.register(VariantSignId::SlashReport(self.session), machines)
-        {
+        for msg in self.attempt_manager.register(VariantSignId::SlashReport, machines) {
           SlashReportSignerToCoordinatorMessages::send(&mut txn, self.session, &msg);
         }
         txn.commit();
@@ -102,14 +101,15 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SlashReportSignerTask<D, S> {
             }
           }
           Response::Signature { id, signature } => {
-            let VariantSignId::SlashReport(session) = id else {
-              panic!("SlashReportSignerTask signed a non-SlashReport")
-            };
-            assert_eq!(session, self.session);
+            assert_eq!(id, VariantSignId::SlashReport);
             // Drain the channel
             SlashReport::try_recv(&mut txn, self.session).unwrap();
             // Send the signature
-            SlashReportSignature::send(&mut txn, session, &Signature::from(signature).encode());
+            SlashReportSignature::send(
+              &mut txn,
+              self.session,
+              &Signature::from(signature).encode(),
+            );
           }
         }
 

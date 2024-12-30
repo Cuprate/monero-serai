@@ -45,7 +45,7 @@ impl<D: Db, M: Clone + PreprocessMachine> AttemptManager<D, M> {
 
   /// Register a signing protocol to attempt.
   ///
-  /// This ID must be unique across all sessions, attempt managers, protocols, etc.
+  /// This ID must be unique to the session, across all attempt managers, protocols, etc.
   pub fn register(&mut self, id: VariantSignId, machines: Vec<M>) -> Vec<ProcessorMessage> {
     let mut protocol =
       SigningProtocol::new(self.db.clone(), self.session, self.start_i, id, machines);
@@ -66,7 +66,7 @@ impl<D: Db, M: Clone + PreprocessMachine> AttemptManager<D, M> {
     } else {
       log::info!("retired signing protocol {id:?}");
     }
-    SigningProtocol::<D, M>::cleanup(txn, id);
+    SigningProtocol::<D, M>::cleanup(txn, self.session, id);
   }
 
   /// Handle a message for a signing protocol.

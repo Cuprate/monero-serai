@@ -14,7 +14,7 @@ use messages::sign::{VariantSignId, SignId, ProcessorMessage};
 
 create_db!(
   FrostAttemptManager {
-    Attempted: (id: VariantSignId) -> u32,
+    Attempted: (session: Session, id: VariantSignId) -> u32,
   }
 );
 
@@ -92,11 +92,11 @@ impl<D: Db, M: Clone + PreprocessMachine> SigningProtocol<D, M> {
     */
     {
       let mut txn = self.db.txn();
-      let prior_attempted = Attempted::get(&txn, self.id);
+      let prior_attempted = Attempted::get(&txn, self.session, self.id);
       if Some(attempt) <= prior_attempted {
         return vec![];
       }
-      Attempted::set(&mut txn, self.id, &attempt);
+      Attempted::set(&mut txn, self.session, self.id, &attempt);
       txn.commit();
     }
 
@@ -278,7 +278,7 @@ impl<D: Db, M: Clone + PreprocessMachine> SigningProtocol<D, M> {
   }
 
   /// Cleanup the database entries for a specified signing protocol.
-  pub(crate) fn cleanup(txn: &mut impl DbTxn, id: VariantSignId) {
-    Attempted::del(txn, id);
+  pub(crate) fn cleanup(txn: &mut impl DbTxn, session: Session, id: VariantSignId) {
+    Attempted::del(txn, session, id);
   }
 }

@@ -376,6 +376,12 @@ impl<
   /// This is a cheap call and able to be done inline from a higher-level loop.
   pub fn queue_message(&mut self, txn: &mut impl DbTxn, message: &CoordinatorMessage) {
     let sign_id = message.sign_id();
+
+    // Don't queue messages for already retired keys
+    if Some(sign_id.session.0) <= db::LatestRetiredSession::get(txn).map(|session| session.0) {
+      return;
+    }
+
     let tasks = self.tasks.get(&sign_id.session);
     match sign_id.id {
       VariantSignId::Cosign(_) => {
@@ -390,7 +396,7 @@ impl<
           tasks.batch.run_now();
         }
       }
-      VariantSignId::SlashReport(_) => {
+      VariantSignId::SlashReport => {
         db::CoordinatorToSlashReportSignerMessages::send(txn, sign_id.session, message);
         if let Some(tasks) = tasks {
           tasks.slash_report.run_now();
@@ -415,6 +421,11 @@ impl<
     block_number: u64,
     block: [u8; 32],
   ) {
+    // Don't cosign blocks with already retired keys
+    if Some(session.0) <= db::LatestRetiredSession::get(txn).map(|session| session.0) {
+      return;
+    }
+
     db::ToCosign::set(&mut txn, session, &(block_number, block));
     txn.commit();
 
@@ -432,6 +443,11 @@ impl<
     session: Session,
     slash_report: &Vec<Slash>,
   ) {
+    // Don't sign slash reports with already retired keys
+    if Some(session.0) <= db::LatestRetiredSession::get(txn).map(|session| session.0) {
+      return;
+    }
+
     db::SlashReport::send(&mut txn, session, slash_report);
     txn.commit();
 
