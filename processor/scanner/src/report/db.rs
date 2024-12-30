@@ -25,6 +25,10 @@ create_db!(
   ScannerReport {
     // The next block to potentially report
     NextToPotentiallyReportBlock: () -> u64,
+
+    // The last session to sign a Batch and their first Batch signed
+    LastSessionToSignBatchAndFirstBatch: () -> (Session, u32),
+
     // The next Batch ID to use
     NextBatchId: () -> u32,
 
@@ -43,6 +47,19 @@ pub(crate) struct ReturnInformation<S: ScannerFeed> {
 
 pub(crate) struct ReportDb<S: ScannerFeed>(PhantomData<S>);
 impl<S: ScannerFeed> ReportDb<S> {
+  pub(crate) fn set_last_session_to_sign_batch_and_first_batch(
+    txn: &mut impl DbTxn,
+    session: Session,
+    id: u32,
+  ) {
+    LastSessionToSignBatchAndFirstBatch::set(txn, &(session, id));
+  }
+  pub(crate) fn last_session_to_sign_batch_and_first_batch(
+    getter: &impl Get,
+  ) -> Option<(Session, u32)> {
+    LastSessionToSignBatchAndFirstBatch::get(getter)
+  }
+
   pub(crate) fn set_next_to_potentially_report_block(
     txn: &mut impl DbTxn,
     next_to_potentially_report_block: u64,

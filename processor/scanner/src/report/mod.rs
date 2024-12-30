@@ -5,13 +5,14 @@ use blake2::{digest::typenum::U32, Digest, Blake2b};
 use scale::Encode;
 use serai_db::{DbTxn, Db};
 
+use serai_validator_sets_primitives::Session;
 use serai_in_instructions_primitives::{MAX_BATCH_SIZE, Batch};
 
 use primitives::{EncodableG, task::ContinuallyRan};
 use crate::{
   db::{Returnable, ScannerGlobalDb, InInstructionData, ScanToReportDb, Batches, BatchesToSign},
   scan::next_to_scan_for_outputs_block,
-  ScannerFeed, KeyFor,
+  substrate, ScannerFeed, KeyFor,
 };
 
 mod db;
@@ -92,6 +93,7 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for ReportTask<D, S> {
           external_key_for_session_to_sign_batch,
           returnable_in_instructions: in_instructions,
         } = ScanToReportDb::<S>::recv_in_instructions(&mut txn, block_number);
+
         let notable = ScannerGlobalDb::<S>::is_block_notable(&txn, block_number);
         if !notable {
           assert!(in_instructions.is_empty(), "block wasn't notable yet had InInstructions");
@@ -100,6 +102,62 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for ReportTask<D, S> {
         if notable {
           let network = S::NETWORK;
           let mut batch_id = ReportDb::<S>::acquire_batch_id(&mut txn);
+
+          /*
+            If this is the handover Batch, the first Batch signed by a session which retires the
+            prior validator set, then this should only be signed after the prior validator set's
+            actions are fully validated.
+
+            The new session will only be responsible for signing this Batch if the prior key has
+            retired, successfully completed all its on-external-network actions.
+
+            We check here the prior session has successfully completed all its on-Serai-network
+            actions by ensuring we've validated all Batches expected from it. Only then do we sign
+            the Batch confirming the handover.
+
+            We also wait for the Batch confirming the handover to be accepted on-chain, ensuring we
+            don't verify the prior session's Batches, sign the handover Batch and the following
+            Batch, have the prior session publish a malicious Batch where our handover Batch should
+            be, before our following Batch becomes our handover Batch.
+          */
+          if session_to_sign_batch != Session(0) {
+            // We may have Session(1)'s first Batch be Batch 0 if Session(0) never publishes a
+            // Batch. This is fine as we'll hit the distinct Session check and then set the correct
+            // values into this DB entry. All other sessions must complete the handover process,
+            // which requires having published at least one Batch
+            let (last_session, first_batch) =
+              ReportDb::<S>::last_session_to_sign_batch_and_first_batch(&txn)
+                .unwrap_or((Session(0), 0));
+            // Because this boolean was expanded, we lose short-circuiting. That's fine
+            let handover_batch = last_session != session_to_sign_batch;
+            let batch_after_handover_batch =
+              (last_session == session_to_sign_batch) && ((first_batch + 1) == batch_id);
+            if handover_batch || batch_after_handover_batch {
+              let verified_prior_batch = substrate::last_acknowledged_batch::<S>(&txn)
+                // Since `batch_id = 0` in the Session(0)-never-published-a-Batch case, we don't
+                // check `last_acknowledged_batch >= (batch_id - 1)` but instead this
+                .map(|last_acknowledged_batch| (last_acknowledged_batch + 1) >= batch_id)
+                // We've never verified any Batches
+                .unwrap_or(false);
+              if !verified_prior_batch {
+                // Drop this txn, restoring the Batch to be worked on in the future
+                drop(txn);
+                return Ok(block_number > next_to_potentially_report);
+              }
+            }
+
+            // If this is the handover Batch, update the last session to sign a Batch
+            if handover_batch {
+              ReportDb::<S>::set_last_session_to_sign_batch_and_first_batch(
+                &mut txn,
+                session_to_sign_batch,
+                batch_id,
+              );
+            }
+          }
+
+          // TODO: The above code doesn't work if we end up with two Batches (the handover and the
+          // following) within this one Block due to Batch size limits
 
           // start with empty batch
           let mut batches = vec![Batch { network, id: batch_id, instructions: vec![] }];

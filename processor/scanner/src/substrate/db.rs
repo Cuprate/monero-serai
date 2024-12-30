@@ -40,6 +40,12 @@ pub(crate) enum Action<S: ScannerFeed> {
   QueueBurns(Vec<OutInstructionWithBalance>),
 }
 
+create_db!(
+  ScannerSubstrate {
+    LastAcknowledgedBatch: () -> u32,
+  }
+);
+
 db_channel!(
   ScannerSubstrate {
     Actions: () -> ActionEncodable,
@@ -48,6 +54,14 @@ db_channel!(
 
 pub(crate) struct SubstrateDb<S: ScannerFeed>(PhantomData<S>);
 impl<S: ScannerFeed> SubstrateDb<S> {
+  pub(crate) fn last_acknowledged_batch(getter: &impl Get) -> Option<u32> {
+    LastAcknowledgedBatch::get(getter)
+  }
+
+  pub(crate) fn set_last_acknowledged_batch(txn: &mut impl DbTxn, id: u32) {
+    LastAcknowledgedBatch::set(txn, &id)
+  }
+
   pub(crate) fn queue_acknowledge_batch(
     txn: &mut impl DbTxn,
     batch_id: u32,

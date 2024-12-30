@@ -1,6 +1,6 @@
 use core::{marker::PhantomData, future::Future};
 
-use serai_db::{DbTxn, Db};
+use serai_db::{Get, DbTxn, Db};
 
 use serai_coins_primitives::{OutInstruction, OutInstructionWithBalance};
 use serai_validator_sets_primitives::Session;
@@ -14,6 +14,9 @@ use crate::{
 mod db;
 use db::*;
 
+pub(crate) fn last_acknowledged_batch<S: ScannerFeed>(getter: &impl Get) -> Option<u32> {
+  SubstrateDb::<S>::last_acknowledged_batch(getter)
+}
 pub(crate) fn queue_acknowledge_batch<S: ScannerFeed>(
   txn: &mut impl DbTxn,
   batch_id: u32,
@@ -99,6 +102,7 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SubstrateTask<D, S> {
               "batch acknowledged on-chain was distinct"
             );
 
+            SubstrateDb::<S>::set_last_acknowledged_batch(&mut txn, batch_id);
             AcknowledgedBatches::send(
               &mut txn,
               &external_key_for_session_to_sign_batch.0,
