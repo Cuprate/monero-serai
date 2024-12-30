@@ -26,9 +26,6 @@ create_db!(
     // The next block to create batches for
     NextBlockToBatch: () -> u64,
 
-    // The last session to sign a Batch and their first Batch signed
-    LastSessionToSignBatchAndFirstBatch: () -> (Session, u32),
-
     // The next Batch ID to use
     NextBatchId: () -> u32,
 
@@ -47,19 +44,6 @@ pub(crate) struct ReturnInformation<S: ScannerFeed> {
 
 pub(crate) struct BatchDb<S: ScannerFeed>(PhantomData<S>);
 impl<S: ScannerFeed> BatchDb<S> {
-  pub(crate) fn set_last_session_to_sign_batch_and_first_batch(
-    txn: &mut impl DbTxn,
-    session: Session,
-    id: u32,
-  ) {
-    LastSessionToSignBatchAndFirstBatch::set(txn, &(session, id));
-  }
-  pub(crate) fn last_session_to_sign_batch_and_first_batch(
-    getter: &impl Get,
-  ) -> Option<(Session, u32)> {
-    LastSessionToSignBatchAndFirstBatch::get(getter)
-  }
-
   pub(crate) fn set_next_block_to_batch(txn: &mut impl DbTxn, next_block_to_batch: u64) {
     NextBlockToBatch::set(txn, &next_block_to_batch);
   }
