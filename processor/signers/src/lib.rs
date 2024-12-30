@@ -422,7 +422,7 @@ impl<
     block: [u8; 32],
   ) {
     // Don't cosign blocks with already retired keys
-    if Some(session.0) <= db::LatestRetiredSession::get(txn).map(|session| session.0) {
+    if Some(session.0) <= db::LatestRetiredSession::get(&txn).map(|session| session.0) {
       return;
     }
 
@@ -444,7 +444,7 @@ impl<
     slash_report: &Vec<Slash>,
   ) {
     // Don't sign slash reports with already retired keys
-    if Some(session.0) <= db::LatestRetiredSession::get(txn).map(|session| session.0) {
+    if Some(session.0) <= db::LatestRetiredSession::get(&txn).map(|session| session.0) {
       return;
     }
 

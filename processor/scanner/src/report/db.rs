@@ -5,10 +5,11 @@ use group::GroupEncoding;
 
 use scale::{Encode, Decode, IoReader};
 use borsh::{BorshSerialize, BorshDeserialize};
-use serai_db::{Get, DbTxn, create_db};
+use serai_db::{Get, DbTxn, create_db, db_channel};
 
 use serai_primitives::Balance;
 use serai_validator_sets_primitives::Session;
+use serai_in_instructions_primitives::Batch;
 
 use primitives::EncodableG;
 use crate::{ScannerFeed, KeyFor, AddressFor};
@@ -37,6 +38,12 @@ create_db!(
 
     // The return addresses for the InInstructions within a Batch
     SerializedReturnAddresses: (batch: u32) -> Vec<u8>,
+  }
+);
+
+db_channel!(
+  ScannerReport {
+    InternalBatches: <G: GroupEncoding>() -> (Session, EncodableG<G>, Batch),
   }
 );
 
