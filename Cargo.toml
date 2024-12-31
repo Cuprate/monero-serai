@@ -99,6 +99,7 @@ members = [
   "coordinator/tributary/tendermint",
   "coordinator/tributary",
   "coordinator/cosign",
+  "coordinator/substrate",
   "coordinator",
 
   "substrate/primitives",

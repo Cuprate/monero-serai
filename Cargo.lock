@@ -8346,11 +8346,13 @@ version = "0.1.0"
 dependencies = [
  "blake2",
  "borsh",
+ "futures",
  "log",
  "parity-scale-codec",
  "serai-client",
  "serai-cosign",
  "serai-db",
+ "serai-processor-messages",
  "serai-task",
  "tokio",
 ]

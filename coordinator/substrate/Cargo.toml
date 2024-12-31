@@ -1,9 +1,9 @@
 [package]
-name = "serai-cosign"
+name = "serai-coordinator-substrate"
 version = "0.1.0"
-description = "Evaluator of cosigns for the Serai network"
+description = "Serai Coordinator's Substrate Scanner"
 license = "AGPL-3.0-only"
-repository = "https://github.com/serai-dex/serai/tree/develop/coordinator/cosign"
+repository = "https://github.com/serai-dex/serai/tree/develop/coordinator/substrate"
 authors = ["Luke Parker <lukeparker5132@gmail.com>"]
 keywords = []
 edition = "2021"
@@ -18,16 +18,18 @@ rustdoc-args = ["--cfg", "docsrs"]
 workspace = true
 
 [dependencies]
-blake2 = { version = "0.10", default-features = false, features = ["std"] }
-schnorrkel = { version = "0.11", default-features = false, features = ["std"] }
-
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["std", "derive"] }
 borsh = { version = "1", default-features = false, features = ["std", "derive", "de_strict_order"] }
 serai-client = { path = "../../substrate/client", default-features = false, features = ["serai", "borsh"] }
 
 log = { version = "0.4", default-features = false, features = ["std"] }
 
+futures = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1", default-features = false }
 
 serai-db = { version = "0.1.1", path = "../../common/db" }
 serai-task = { version = "0.1", path = "../../common/task" }
+
+serai-cosign = { path = "../cosign" }
+
+messages = { package = "serai-processor-messages", path = "../../processor/messages" }

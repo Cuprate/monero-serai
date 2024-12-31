@@ -145,7 +145,7 @@ pub mod sign {
 pub mod coordinator {
   use super::*;
 
-  // TODO: Why does this not simply take the block hash?
+  // TODO: Remove this for the one defined in serai-cosign
   pub fn cosign_block_msg(block_number: u64, block: [u8; 32]) -> Vec<u8> {
     const DST: &[u8] = b"Cosign";
     let mut res = vec![u8::try_from(DST.len()).unwrap()];
@@ -203,7 +203,7 @@ pub mod substrate {
     /// A block from Serai with relevance to this processor.
     Block {
       serai_block_number: u64,
-      batches: Vec<ExecutedBatch>,
+      batch: Option<ExecutedBatch>,
       burns: Vec<OutInstructionWithBalance>,
     },
   }

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use blake2::{Digest, Blake2s256};
 
+use scale::{Encode, Decode};
 use borsh::{BorshSerialize, BorshDeserialize};
 
 use serai_client::{
@@ -63,6 +64,64 @@ impl GlobalSession {
   }
 }
 
+/// If the block has events.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
+enum HasEvents {
+  /// The block had a notable event.
+  ///
+  /// This is a special case as blocks with key gen events change the keys used for cosigning, and
+  /// accordingly must be cosigned before we advance past them.
+  Notable,
+  /// The block had an non-notable event justifying a cosign.
+  NonNotable,
+  /// The block didn't have an event justifying a cosign.
+  No,
+}
+
+/// An intended cosign.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
+pub struct CosignIntent {
+  /// The global session this cosign is being performed under.
+  global_session: [u8; 32],
+  /// The number of the block to cosign.
+  block_number: u64,
+  /// The hash of the block to cosign.
+  block_hash: [u8; 32],
+  /// If this cosign must be handled before further cosigns are.
+  notable: bool,
+}
+
+/// A cosign.
+#[derive(Clone, PartialEq, Eq, Debug, Encode, Decode, BorshSerialize, BorshDeserialize)]
+pub struct Cosign {
+  /// The global session this cosign is being performed under.
+  pub global_session: [u8; 32],
+  /// The number of the block to cosign.
+  pub block_number: u64,
+  /// The hash of the block to cosign.
+  pub block_hash: [u8; 32],
+  /// The actual cosigner.
+  pub cosigner: NetworkId,
+}
+
+/// A signed cosign.
+#[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
+pub struct SignedCosign {
+  /// The cosign.
+  pub cosign: Cosign,
+  /// The signature for the cosign.
+  pub signature: [u8; 64],
+}
+
+impl SignedCosign {
+  fn verify_signature(&self, signer: serai_client::Public) -> bool {
+    let Ok(signer) = schnorrkel::PublicKey::from_bytes(&signer.0) else { return false };
+    let Ok(signature) = schnorrkel::Signature::from_bytes(&self.signature) else { return false };
+
+    signer.verify_simple(COSIGN_CONTEXT, &self.cosign.encode(), &signature).is_ok()
+  }
+}
+
 create_db! {
   Cosign {
     // The following are populated by the intend task and used throughout the library
@@ -94,64 +153,6 @@ create_db! {
     Faults: (global_session: [u8; 32]) -> Vec<SignedCosign>,
     // The global session which faulted.
     FaultedSession: () -> [u8; 32],
-  }
-}
-
-/// If the block has events.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
-enum HasEvents {
-  /// The block had a notable event.
-  ///
-  /// This is a special case as blocks with key gen events change the keys used for cosigning, and
-  /// accordingly must be cosigned before we advance past them.
-  Notable,
-  /// The block had an non-notable event justifying a cosign.
-  NonNotable,
-  /// The block didn't have an event justifying a cosign.
-  No,
-}
-
-/// An intended cosign.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
-struct CosignIntent {
-  /// The global session this cosign is being performed under.
-  global_session: [u8; 32],
-  /// The number of the block to cosign.
-  block_number: u64,
-  /// The hash of the block to cosign.
-  block_hash: [u8; 32],
-  /// If this cosign must be handled before further cosigns are.
-  notable: bool,
-}
-
-/// A cosign.
-#[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
-pub struct Cosign {
-  /// The global session this cosign is being performed under.
-  pub global_session: [u8; 32],
-  /// The number of the block to cosign.
-  pub block_number: u64,
-  /// The hash of the block to cosign.
-  pub block_hash: [u8; 32],
-  /// The actual cosigner.
-  pub cosigner: NetworkId,
-}
-
-/// A signed cosign.
-#[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
-pub struct SignedCosign {
-  /// The cosign.
-  pub cosign: Cosign,
-  /// The signature for the cosign.
-  pub signature: [u8; 64],
-}
-
-impl SignedCosign {
-  fn verify_signature(&self, signer: serai_client::Public) -> bool {
-    let Ok(signer) = schnorrkel::PublicKey::from_bytes(&signer.0) else { return false };
-    let Ok(signature) = schnorrkel::Signature::from_bytes(&self.signature) else { return false };
-
-    signer.verify_simple(COSIGN_CONTEXT, &borsh::to_vec(&self.cosign).unwrap(), &signature).is_ok()
   }
 }
 
@@ -219,6 +220,7 @@ pub trait RequestNotableCosigns: 'static + Send {
 }
 
 /// An error used to indicate the cosigning protocol has faulted.
+#[derive(Debug)]
 pub struct Faulted;
 
 /// The interface to manage cosigning with.
@@ -255,12 +257,23 @@ impl<D: Db> Cosigning<D> {
   }
 
   /// The latest cosigned block number.
-  pub fn latest_cosigned_block_number(&self) -> Result<u64, Faulted> {
-    if FaultedSession::get(&self.db).is_some() {
+  pub fn latest_cosigned_block_number(getter: &impl Get) -> Result<u64, Faulted> {
+    if FaultedSession::get(getter).is_some() {
       Err(Faulted)?;
     }
 
-    Ok(LatestCosignedBlockNumber::get(&self.db).unwrap_or(0))
+    Ok(LatestCosignedBlockNumber::get(getter).unwrap_or(0))
+  }
+
+  /// Fetch an cosigned Substrate block by its block number.
+  pub fn cosigned_block(getter: &impl Get, block_number: u64) -> Result<Option<[u8; 32]>, Faulted> {
+    if block_number > Self::latest_cosigned_block_number(getter)? {
+      return Ok(None);
+    }
+
+    Ok(Some(
+      SubstrateBlocks::get(getter, block_number).expect("cosigned block but didn't index it"),
+    ))
   }
 
   /// Fetch the notable cosigns for a global session in order to respond to requests.
@@ -421,5 +434,20 @@ impl<D: Db> Cosigning<D> {
 
     txn.commit();
     Ok(true)
+  }
+
+  /// Receive intended cosigns to produce for this ValidatorSet.
+  ///
+  /// All cosigns intended, up to and including the next notable cosign, are returned.
+  ///
+  /// This will drain the internal channel and not re-yield these intentions again.
+  pub fn intended_cosigns(txn: &mut impl DbTxn, set: ValidatorSet) -> Vec<CosignIntent> {
+    let mut res: Vec<CosignIntent> = vec![];
+    // While we have yet to find a notable cosign...
+    while !res.last().map(|cosign| cosign.notable).unwrap_or(false) {
+      let Some(intent) = intend::IntendedCosigns::try_recv(txn, set) else { break };
+      res.push(intent);
+    }
+    res
   }
 }

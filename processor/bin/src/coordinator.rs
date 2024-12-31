@@ -5,9 +5,8 @@ use tokio::sync::mpsc;
 
 use scale::Encode;
 use serai_client::{
-  primitives::Signature,
-  validator_sets::primitives::Session,
-  in_instructions::primitives::{Batch, SignedBatch},
+  primitives::Signature, validator_sets::primitives::Session,
+  in_instructions::primitives::SignedBatch,
 };
 
 use serai_db::{Get, DbTxn, Db, create_db, db_channel};

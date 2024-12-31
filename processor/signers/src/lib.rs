@@ -12,7 +12,7 @@ use frost::dkg::{ThresholdCore, ThresholdKeys};
 
 use serai_primitives::Signature;
 use serai_validator_sets_primitives::{Session, Slash};
-use serai_in_instructions_primitives::{Batch, SignedBatch};
+use serai_in_instructions_primitives::SignedBatch;
 
 use serai_db::{DbTxn, Db};
 

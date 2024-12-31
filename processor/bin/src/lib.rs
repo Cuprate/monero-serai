@@ -272,20 +272,17 @@ pub async fn main_loop<
         }
         messages::substrate::CoordinatorMessage::Block {
           serai_block_number: _,
-          batches,
+          batch,
           mut burns,
         } => {
           let scanner = scanner.as_mut().unwrap();
 
-          // Substrate sets this limit to prevent DoSs from malicious validator sets
-          // That bound lets us consume this txn in the following loop body, as an optimization
-          assert!(batches.len() <= 1);
-          for messages::substrate::ExecutedBatch {
+          if let Some(messages::substrate::ExecutedBatch {
             id,
             publisher,
             in_instructions_hash,
             in_instruction_results,
-          } in batches
+          }) = batch
           {
             let key_to_activate =
               KeyToActivate::<KeyFor<S>>::try_recv(txn.as_mut().unwrap()).map(|key| key.0);

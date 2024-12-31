@@ -65,8 +65,7 @@ pub async fn set_up_genesis(
       })
       .or_insert(0);
 
-    let batch =
-      Batch { network: coin.network(), id: batch_ids[&coin.network()], block, instructions };
+    let batch = Batch { network: coin.network(), id: batch_ids[&coin.network()], instructions };
     provide_batch(serai, batch).await;
   }
 

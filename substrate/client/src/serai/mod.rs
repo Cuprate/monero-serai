@@ -45,13 +45,13 @@ impl Block {
   }
 
   /// Returns the time of this block, set by its producer, in milliseconds since the epoch.
-  pub fn time(&self) -> Result<u64, SeraiError> {
+  pub fn time(&self) -> Option<u64> {
     for transaction in &self.transactions {
       if let Call::Timestamp(timestamp::Call::set { now }) = transaction.call() {
-        return Ok(*now);
+        return Some(*now);
       }
     }
-    Err(SeraiError::InvalidNode("no time was present in block".to_string()))
+    None
   }
 }
 

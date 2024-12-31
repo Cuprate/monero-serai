@@ -1,10 +1,7 @@
 pub use serai_abi::in_instructions::primitives;
 use primitives::SignedBatch;
 
-use crate::{
-  primitives::{BlockHash, NetworkId},
-  Transaction, SeraiError, Serai, TemporalSerai,
-};
+use crate::{primitives::NetworkId, Transaction, SeraiError, Serai, TemporalSerai};
 
 pub type InInstructionsEvent = serai_abi::in_instructions::Event;
 

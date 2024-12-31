@@ -60,9 +60,16 @@ pub mod pallet {
   #[pallet::event]
   #[pallet::generate_deposit(fn deposit_event)]
   pub enum Event<T: Config> {
-    Batch { network: NetworkId, id: u32, block: BlockHash, instructions_hash: [u8; 32] },
-    InstructionFailure { network: NetworkId, id: u32, index: u32 },
-    Halt { network: NetworkId },
+    Batch {
+      network: NetworkId,
+      publishing_session: Session,
+      id: u32,
+      in_instructions_hash: [u8; 32],
+      in_instruction_results: BitVec<u8, Lsb0>,
+    },
+    Halt {
+      network: NetworkId,
+    },
   }
 
   #[pallet::error]
@@ -254,22 +261,7 @@ pub mod pallet {
     pub fn execute_batch(origin: OriginFor<T>, batch: SignedBatch) -> DispatchResult {
       ensure_none(origin)?;
 
-      let batch = batch.batch;
-
-      Self::deposit_event(Event::Batch {
-        network: batch.network,
-        id: batch.id,
-        instructions_hash: blake2_256(&batch.instructions.encode()),
-      });
-      for (i, instruction) in batch.instructions.into_iter().enumerate() {
-        if Self::execute(instruction).is_err() {
-          Self::deposit_event(Event::InstructionFailure {
-            network: batch.network,
-            id: batch.id,
-            index: u32::try_from(i).unwrap(),
-          });
-        }
-      }
+      // The entire Batch execution is handled in pre_dispatch
 
       Ok(())
     }
@@ -300,6 +292,7 @@ pub mod pallet {
 
       // verify the signature
       let (current_session, prior, current) = keys_for_network::<T>(network)?;
+      let prior_session = Session(current_session.0 - 1);
       let batch_message = batch_message(&batch.batch);
       // Check the prior key first since only a single `Batch` (the last one) will be when prior is
       // Some yet prior wasn't the signing key
@@ -315,6 +308,8 @@ pub mod pallet {
         Err(InvalidTransaction::BadProof)?;
       }
 
+      let batch = batch.batch;
+
       if Halted::<T>::contains_key(network) {
         Err(InvalidTransaction::Custom(1))?;
       }
@@ -323,10 +318,7 @@ pub mod pallet {
       // key is publishing `Batch`s. This should only happen once the current key has verified all
       // `Batch`s published by the prior key, meaning they are accepting the hand-over.
       if prior.is_some() && (!valid_by_prior) {
-        ValidatorSets::<T>::retire_set(ValidatorSet {
-          network,
-          session: Session(current_session.0 - 1),
-        });
+        ValidatorSets::<T>::retire_set(ValidatorSet { network, session: prior_session });
       }
 
       // check that this validator set isn't publishing a batch more than once per block
@@ -335,33 +327,38 @@ pub mod pallet {
       if last_block >= current_block {
         Err(InvalidTransaction::Future)?;
       }
-      LastBatchBlock::<T>::insert(batch.batch.network, frame_system::Pallet::<T>::block_number());
+      LastBatchBlock::<T>::insert(batch.network, frame_system::Pallet::<T>::block_number());
 
       // Verify the batch is sequential
       // LastBatch has the last ID set. The next ID should be it + 1
       // If there's no ID, the next ID should be 0
       let expected = LastBatch::<T>::get(network).map_or(0, |prev| prev + 1);
-      if batch.batch.id < expected {
+      if batch.id < expected {
         Err(InvalidTransaction::Stale)?;
       }
-      if batch.batch.id > expected {
+      if batch.id > expected {
         Err(InvalidTransaction::Future)?;
       }
-      LastBatch::<T>::insert(batch.batch.network, batch.batch.id);
+      LastBatch::<T>::insert(batch.network, batch.id);
 
-      // Verify all Balances in this Batch are for this network
-      for instruction in &batch.batch.instructions {
+      let in_instructions_hash = blake2_256(&batch.instructions.encode());
+      let mut in_instruction_results = BitVec::new();
+      for (i, instruction) in batch.instructions.into_iter().enumerate() {
         // Verify this coin is for this network
-        // If this is ever hit, it means the validator set has turned malicious and should be fully
-        // slashed
-        // Because we have an error here, no validator set which turns malicious should execute
-        // this code path
-        // Accordingly, there's no value in writing code to fully slash the network, when such an
-        // even would require a runtime upgrade to fully resolve anyways
-        if instruction.balance.coin.network() != batch.batch.network {
+        if instruction.balance.coin.network() != batch.network {
           Err(InvalidTransaction::Custom(2))?;
         }
+
+        in_instruction_results.push(Self::execute(instruction).is_ok());
       }
+
+      Self::deposit_event(Event::Batch {
+        network: batch.network,
+        publishing_session: if valid_by_prior { prior_session } else { current_session },
+        id: batch.id,
+        in_instructions_hash,
+        in_instruction_results,
+      });
 
       ValidTransaction::with_tag_prefix("in-instructions")
         .and_provides((batch.batch.network, batch.batch.id))
