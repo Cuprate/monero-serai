@@ -160,6 +160,7 @@ impl<D: Db> ContinuallyRan for CanonicalEventStream<D> {
               network: batch_network,
               publishing_session,
               id,
+              external_network_block_hash,
               in_instructions_hash,
               in_instruction_results,
             } = this_batch
@@ -173,6 +174,7 @@ impl<D: Db> ContinuallyRan for CanonicalEventStream<D> {
               batch = Some(ExecutedBatch {
                 id: *id,
                 publisher: *publishing_session,
+                external_network_block_hash: *external_network_block_hash,
                 in_instructions_hash: *in_instructions_hash,
                 in_instruction_results: in_instruction_results
                   .iter()

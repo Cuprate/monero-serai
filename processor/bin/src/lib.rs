@@ -277,23 +277,14 @@ pub async fn main_loop<
         } => {
           let scanner = scanner.as_mut().unwrap();
 
-          if let Some(messages::substrate::ExecutedBatch {
-            id,
-            publisher,
-            in_instructions_hash,
-            in_instruction_results,
-          }) = batch
-          {
+          if let Some(batch) = batch {
             let key_to_activate =
               KeyToActivate::<KeyFor<S>>::try_recv(txn.as_mut().unwrap()).map(|key| key.0);
 
             // This is a cheap call as it internally just queues this to be done later
             let _: () = scanner.acknowledge_batch(
               txn.take().unwrap(),
-              id,
-              publisher,
-              in_instructions_hash,
-              in_instruction_results,
+              batch,
               /*
                 `acknowledge_batch` takes burns to optimize handling returns with standard
                 payments. That's why handling these with a Batch (and not waiting until the

@@ -106,6 +106,7 @@ pub struct InInstructionWithBalance {
 pub struct Batch {
   pub network: NetworkId,
   pub id: u32,
+  pub external_network_block_hash: [u8; 32],
   pub instructions: Vec<InInstructionWithBalance>,
 }
 

@@ -188,6 +188,7 @@ pub mod substrate {
   pub struct ExecutedBatch {
     pub id: u32,
     pub publisher: Session,
+    pub external_network_block_hash: [u8; 32],
     pub in_instructions_hash: [u8; 32],
     pub in_instruction_results: Vec<InInstructionResult>,
   }

@@ -3,12 +3,12 @@ use core::{marker::PhantomData, future::Future};
 use serai_db::{Get, DbTxn, Db};
 
 use serai_coins_primitives::{OutInstruction, OutInstructionWithBalance};
-use serai_validator_sets_primitives::Session;
 
+use messages::substrate::ExecutedBatch;
 use primitives::task::ContinuallyRan;
 use crate::{
   db::{ScannerGlobalDb, SubstrateToEventualityDb, AcknowledgedBatches},
-  batch, ScannerFeed, KeyFor,
+  index, batch, ScannerFeed, KeyFor,
 };
 
 mod db;
@@ -19,22 +19,11 @@ pub(crate) fn last_acknowledged_batch<S: ScannerFeed>(getter: &impl Get) -> Opti
 }
 pub(crate) fn queue_acknowledge_batch<S: ScannerFeed>(
   txn: &mut impl DbTxn,
-  batch_id: u32,
-  publisher: Session,
-  in_instructions_hash: [u8; 32],
-  in_instruction_results: Vec<messages::substrate::InInstructionResult>,
+  batch: ExecutedBatch,
   burns: Vec<OutInstructionWithBalance>,
   key_to_activate: Option<KeyFor<S>>,
 ) {
-  SubstrateDb::<S>::queue_acknowledge_batch(
-    txn,
-    batch_id,
-    publisher,
-    in_instructions_hash,
-    in_instruction_results,
-    burns,
-    key_to_activate,
-  )
+  SubstrateDb::<S>::queue_acknowledge_batch(txn, batch, burns, key_to_activate)
 }
 pub(crate) fn queue_queue_burns<S: ScannerFeed>(
   txn: &mut impl DbTxn,
@@ -73,40 +62,38 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SubstrateTask<D, S> {
         };
 
         match action {
-          Action::AcknowledgeBatch(AcknowledgeBatch {
-            batch_id,
-            publisher,
-            in_instructions_hash,
-            in_instruction_results,
-            mut burns,
-            key_to_activate,
-          }) => {
+          Action::AcknowledgeBatch(AcknowledgeBatch { batch, mut burns, key_to_activate }) => {
             // Check if we have the information for this batch
             let Some(batch::BatchInfo {
               block_number,
               session_to_sign_batch,
               external_key_for_session_to_sign_batch,
-              in_instructions_hash: expected_in_instructions_hash,
-            }) = batch::take_info_for_batch::<S>(&mut txn, batch_id)
+              in_instructions_hash,
+            }) = batch::take_info_for_batch::<S>(&mut txn, batch.id)
             else {
               // If we don't, drop this txn (restoring the action to the database)
               drop(txn);
               return Ok(made_progress);
             };
             assert_eq!(
-              publisher, session_to_sign_batch,
+              batch.publisher, session_to_sign_batch,
               "batch acknowledged on-chain was acknowledged by an unexpected publisher"
             );
             assert_eq!(
-              in_instructions_hash, expected_in_instructions_hash,
-              "batch acknowledged on-chain was distinct"
+              batch.external_network_block_hash,
+              index::block_id(&txn, block_number),
+              "batch acknowledged on-chain was for a distinct block"
+            );
+            assert_eq!(
+              batch.in_instructions_hash, in_instructions_hash,
+              "batch acknowledged on-chain had distinct InInstructions"
             );
 
-            SubstrateDb::<S>::set_last_acknowledged_batch(&mut txn, batch_id);
+            SubstrateDb::<S>::set_last_acknowledged_batch(&mut txn, batch.id);
             AcknowledgedBatches::send(
               &mut txn,
               &external_key_for_session_to_sign_batch.0,
-              batch_id,
+              batch.id,
             );
 
             // Mark we made progress and handle this
@@ -143,17 +130,17 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SubstrateTask<D, S> {
 
             // Return the balances for any InInstructions which failed to execute
             {
-              let return_information = batch::take_return_information::<S>(&mut txn, batch_id)
+              let return_information = batch::take_return_information::<S>(&mut txn, batch.id)
                 .expect("didn't save the return information for Batch we published");
               assert_eq!(
-              in_instruction_results.len(),
+              batch.in_instruction_results.len(),
               return_information.len(),
               "amount of InInstruction succeededs differed from amount of return information saved"
             );
 
               // We map these into standard Burns
               for (result, return_information) in
-                in_instruction_results.into_iter().zip(return_information)
+                batch.in_instruction_results.into_iter().zip(return_information)
               {
                 if result == messages::substrate::InInstructionResult::Succeeded {
                   continue;

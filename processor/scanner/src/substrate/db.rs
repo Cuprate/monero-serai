@@ -6,16 +6,14 @@ use borsh::{BorshSerialize, BorshDeserialize};
 use serai_db::{Get, DbTxn, create_db, db_channel};
 
 use serai_coins_primitives::OutInstructionWithBalance;
-use serai_validator_sets_primitives::Session;
+
+use messages::substrate::ExecutedBatch;
 
 use crate::{ScannerFeed, KeyFor};
 
 #[derive(BorshSerialize, BorshDeserialize)]
 struct AcknowledgeBatchEncodable {
-  batch_id: u32,
-  publisher: Session,
-  in_instructions_hash: [u8; 32],
-  in_instruction_results: Vec<messages::substrate::InInstructionResult>,
+  batch: ExecutedBatch,
   burns: Vec<OutInstructionWithBalance>,
   key_to_activate: Option<Vec<u8>>,
 }
@@ -27,10 +25,7 @@ enum ActionEncodable {
 }
 
 pub(crate) struct AcknowledgeBatch<S: ScannerFeed> {
-  pub(crate) batch_id: u32,
-  pub(crate) publisher: Session,
-  pub(crate) in_instructions_hash: [u8; 32],
-  pub(crate) in_instruction_results: Vec<messages::substrate::InInstructionResult>,
+  pub(crate) batch: ExecutedBatch,
   pub(crate) burns: Vec<OutInstructionWithBalance>,
   pub(crate) key_to_activate: Option<KeyFor<S>>,
 }
@@ -64,20 +59,14 @@ impl<S: ScannerFeed> SubstrateDb<S> {
 
   pub(crate) fn queue_acknowledge_batch(
     txn: &mut impl DbTxn,
-    batch_id: u32,
-    publisher: Session,
-    in_instructions_hash: [u8; 32],
-    in_instruction_results: Vec<messages::substrate::InInstructionResult>,
+    batch: ExecutedBatch,
     burns: Vec<OutInstructionWithBalance>,
     key_to_activate: Option<KeyFor<S>>,
   ) {
     Actions::send(
       txn,
       &ActionEncodable::AcknowledgeBatch(AcknowledgeBatchEncodable {
-        batch_id,
-        publisher,
-        in_instructions_hash,
-        in_instruction_results,
+        batch,
         burns,
         key_to_activate: key_to_activate.map(|key| key.to_bytes().as_ref().to_vec()),
       }),
@@ -91,17 +80,11 @@ impl<S: ScannerFeed> SubstrateDb<S> {
     let action_encodable = Actions::try_recv(txn)?;
     Some(match action_encodable {
       ActionEncodable::AcknowledgeBatch(AcknowledgeBatchEncodable {
-        batch_id,
-        publisher,
-        in_instructions_hash,
-        in_instruction_results,
+        batch,
         burns,
         key_to_activate,
       }) => Action::AcknowledgeBatch(AcknowledgeBatch {
-        batch_id,
-        publisher,
-        in_instructions_hash,
-        in_instruction_results,
+        batch,
         burns,
         key_to_activate: key_to_activate.map(|key| {
           let mut repr = <KeyFor<S> as GroupEncoding>::Repr::default();

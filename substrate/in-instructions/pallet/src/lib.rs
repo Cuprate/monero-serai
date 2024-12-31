@@ -63,6 +63,7 @@ pub mod pallet {
     Batch {
       network: NetworkId,
       publishing_session: Session,
+      external_network_block_hash: [u8; 32],
       id: u32,
       in_instructions_hash: [u8; 32],
       in_instruction_results: BitVec<u8, Lsb0>,
@@ -356,6 +357,7 @@ pub mod pallet {
         network: batch.network,
         publishing_session: if valid_by_prior { prior_session } else { current_session },
         id: batch.id,
+        external_network_block_hash: batch.external_network_block_hash,
         in_instructions_hash,
         in_instruction_results,
       });

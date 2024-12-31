@@ -20,6 +20,7 @@ pub enum Event {
     network: NetworkId,
     publishing_session: Session,
     id: u32,
+    external_network_block_hash: [u8; 32],
     in_instructions_hash: [u8; 32],
     in_instruction_results: bitvec::vec::BitVec<u8, bitvec::order::Lsb0>,
   },

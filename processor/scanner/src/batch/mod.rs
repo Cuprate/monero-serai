@@ -10,6 +10,7 @@ use serai_in_instructions_primitives::{MAX_BATCH_SIZE, Batch};
 use primitives::{EncodableG, task::ContinuallyRan};
 use crate::{
   db::{Returnable, ScannerGlobalDb, InInstructionData, ScanToBatchDb, BatchData, BatchToReportDb},
+  index,
   scan::next_to_scan_for_outputs_block,
   ScannerFeed, KeyFor,
 };
@@ -100,10 +101,16 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for BatchTask<D, S> {
         // If this block is notable, create the Batch(s) for it
         if notable {
           let network = S::NETWORK;
+          let external_network_block_hash = index::block_id(&txn, block_number);
           let mut batch_id = BatchDb::<S>::acquire_batch_id(&mut txn);
 
           // start with empty batch
-          let mut batches = vec![Batch { network, id: batch_id, instructions: vec![] }];
+          let mut batches = vec![Batch {
+            network,
+            id: batch_id,
+            external_network_block_hash,
+            instructions: vec![],
+          }];
           // We also track the return information for the InInstructions within a Batch in case
           // they error
           let mut return_information = vec![vec![]];
@@ -123,7 +130,12 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for BatchTask<D, S> {
               batch_id = BatchDb::<S>::acquire_batch_id(&mut txn);
 
               // make a new batch with this instruction included
-              batches.push(Batch { network, id: batch_id, instructions: vec![in_instruction] });
+              batches.push(Batch {
+                network,
+                id: batch_id,
+                external_network_block_hash,
+                instructions: vec![in_instruction],
+              });
               // Since we're allocating a new batch, allocate a new set of return addresses for it
               return_information.push(vec![]);
             }
