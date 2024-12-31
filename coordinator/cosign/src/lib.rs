@@ -308,14 +308,12 @@ impl<D: Db> Cosigning<D> {
       }
       cosigns
     } else {
-      let Some(latest_global_session) = LatestGlobalSessionIntended::get(&self.db) else {
+      let Some(global_session) = evaluator::currently_evaluated_global_session(&self.db) else {
         return vec![];
       };
       let mut cosigns = Vec::with_capacity(serai_client::primitives::NETWORKS.len());
       for network in serai_client::primitives::NETWORKS {
-        if let Some(cosign) =
-          NetworksLatestCosignedBlock::get(&self.db, latest_global_session, network)
-        {
+        if let Some(cosign) = NetworksLatestCosignedBlock::get(&self.db, global_session, network) {
           cosigns.push(cosign);
         }
       }

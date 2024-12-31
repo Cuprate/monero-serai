@@ -24,7 +24,7 @@ db_channel!(
 );
 
 // This is a strict function which won't panic, even with a malicious Serai node, so long as:
-// - It's called incrementally
+// - It's called incrementally (with an increment of 1)
 // - It's only called for block numbers we've completed indexing on within the intend task
 // - It's only called for block numbers after a global session has started
 // - The global sessions channel is populated as the block declaring the session is indexed
@@ -69,6 +69,10 @@ fn currently_evaluated_global_session_strict(
   res
 }
 
+pub(crate) fn currently_evaluated_global_session(getter: &impl Get) -> Option<[u8; 32]> {
+  CurrentlyEvaluatedGlobalSession::get(getter).map(|(id, _info)| id)
+}
+
 /// A task to determine if a block has been cosigned and we should handle it.
 pub(crate) struct CosignEvaluatorTask<D: Db, R: RequestNotableCosigns> {
   pub(crate) db: D,
@@ -87,13 +91,14 @@ impl<D: Db, R: RequestNotableCosigns> ContinuallyRan for CosignEvaluatorTask<D, 
           break;
         };
 
+        // Fetch the global session information
+        let (global_session, global_session_info) =
+          currently_evaluated_global_session_strict(&mut txn, block_number);
+
         match has_events {
           // Because this had notable events, we require an explicit cosign for this block by a
           // supermajority of the prior block's validator sets
           HasEvents::Notable => {
-            let (global_session, global_session_info) =
-              currently_evaluated_global_session_strict(&mut txn, block_number);
-
             let mut weight_cosigned = 0;
             for set in global_session_info.sets {
               // Check if we have the cosign from this set
@@ -144,10 +149,6 @@ impl<D: Db, R: RequestNotableCosigns> ContinuallyRan for CosignEvaluatorTask<D, 
                 exceed the latest global session we've evaluated the start of. This current block
                 is during the latest global session we've evaluated the start of.
               */
-
-              // Get the global session for this block
-              let (global_session, global_session_info) =
-                currently_evaluated_global_session_strict(&mut txn, block_number);
 
               let mut weight_cosigned = 0;
               let mut lowest_common_block: Option<u64> = None;
