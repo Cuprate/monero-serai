@@ -96,6 +96,9 @@ impl NewSet {
 }
 
 /// The channel for notifications to sign a slash report, as emitted by an ephemeral event stream.
+///
+/// These notifications MAY be for irrelevant validator sets. The only guarantee is the
+/// notifications for all relevant validator sets will be included.
 pub struct SignSlashReport;
 impl SignSlashReport {
   pub(crate) fn send(txn: &mut impl DbTxn, set: &ValidatorSet) {

@@ -135,7 +135,7 @@ impl<T: TransactionTrait> Block<T> {
     // Check TXs are sorted by nonce.
     let nonce = |tx: &Transaction<T>| {
       if let TransactionKind::Signed(_, Signed { nonce, .. }) = tx.kind() {
-        *nonce
+        nonce
       } else {
         0
       }

@@ -110,7 +110,7 @@ impl<T: TransactionTrait> Transaction<T> {
     }
   }
 
-  pub fn kind(&self) -> TransactionKind<'_> {
+  pub fn kind(&self) -> TransactionKind {
     match self {
       Transaction::Tendermint(tx) => tx.kind(),
       Transaction::Application(tx) => tx.kind(),

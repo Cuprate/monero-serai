@@ -323,7 +323,7 @@ impl<D: Db, T: TransactionTrait> Blockchain<D, T> {
         }
         TransactionKind::Signed(order, Signed { signer, nonce, .. }) => {
           let next_nonce = nonce + 1;
-          txn.put(Self::next_nonce_key(&self.genesis, signer, &order), next_nonce.to_le_bytes());
+          txn.put(Self::next_nonce_key(&self.genesis, &signer, &order), next_nonce.to_le_bytes());
           self.mempool.remove(&tx.hash());
         }
       }

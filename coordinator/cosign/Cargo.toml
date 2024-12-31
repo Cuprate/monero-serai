@@ -29,5 +29,5 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 
 tokio = { version = "1", default-features = false }
 
-serai-db = { version = "0.1.1", path = "../../common/db" }
-serai-task = { version = "0.1", path = "../../common/task" }
+serai-db = { path = "../../common/db", version = "0.1.1" }
+serai-task = { path = "../../common/task", version = "0.1" }

@@ -425,7 +425,7 @@ async fn block_tx_ordering() {
   }
 
   impl TransactionTrait for SignedTx {
-    fn kind(&self) -> TransactionKind<'_> {
+    fn kind(&self) -> TransactionKind {
       match self {
         SignedTx::Signed(signed) => signed.kind(),
         SignedTx::Provided(pro) => pro.kind(),

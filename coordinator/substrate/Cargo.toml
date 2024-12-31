@@ -20,16 +20,16 @@ workspace = true
 [dependencies]
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["std", "derive"] }
 borsh = { version = "1", default-features = false, features = ["std", "derive", "de_strict_order"] }
-serai-client = { path = "../../substrate/client", default-features = false, features = ["serai", "borsh"] }
+serai-client = { path = "../../substrate/client", version = "0.1", default-features = false, features = ["serai", "borsh"] }
 
 log = { version = "0.4", default-features = false, features = ["std"] }
 
 futures = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1", default-features = false }
 
-serai-db = { version = "0.1.1", path = "../../common/db" }
-serai-task = { version = "0.1", path = "../../common/task" }
+serai-db = { path = "../../common/db", version = "0.1.1" }
+serai-task = { path = "../../common/task", version = "0.1" }
 
-serai-cosign = { path = "../cosign" }
+serai-cosign = { path = "../cosign", version = "0.1" }
 
-messages = { package = "serai-processor-messages", path = "../../processor/messages" }
+messages = { package = "serai-processor-messages", version = "0.1", path = "../../processor/messages" }

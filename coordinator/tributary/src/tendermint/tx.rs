@@ -39,7 +39,7 @@ impl ReadWrite for TendermintTx {
 }
 
 impl Transaction for TendermintTx {
-  fn kind(&self) -> TransactionKind<'_> {
+  fn kind(&self) -> TransactionKind {
     // There's an assert elsewhere in the codebase expecting this behavior
     // If we do want to add Provided/Signed TendermintTxs, review the implications carefully
     TransactionKind::Unsigned

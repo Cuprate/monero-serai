@@ -67,7 +67,7 @@ impl ReadWrite for ProvidedTransaction {
 }
 
 impl Transaction for ProvidedTransaction {
-  fn kind(&self) -> TransactionKind<'_> {
+  fn kind(&self) -> TransactionKind {
     match self.0[0] {
       1 => TransactionKind::Provided("order1"),
       2 => TransactionKind::Provided("order2"),
@@ -119,8 +119,8 @@ impl ReadWrite for SignedTransaction {
 }
 
 impl Transaction for SignedTransaction {
-  fn kind(&self) -> TransactionKind<'_> {
-    TransactionKind::Signed(vec![], &self.1)
+  fn kind(&self) -> TransactionKind {
+    TransactionKind::Signed(vec![], self.1.clone())
   }
 
   fn hash(&self) -> [u8; 32] {

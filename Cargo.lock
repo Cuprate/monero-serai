@@ -8344,7 +8344,6 @@ dependencies = [
 name = "serai-coordinator-substrate"
 version = "0.1.0"
 dependencies = [
- "blake2",
  "borsh",
  "futures",
  "log",

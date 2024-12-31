@@ -81,11 +81,11 @@ impl<D: Db, T: TransactionTrait> Mempool<D, T> {
         }
         Transaction::Application(tx) => match tx.kind() {
           TransactionKind::Signed(order, Signed { signer, nonce, .. }) => {
-            let amount = *res.txs_per_signer.get(signer).unwrap_or(&0) + 1;
-            res.txs_per_signer.insert(*signer, amount);
+            let amount = *res.txs_per_signer.get(&signer).unwrap_or(&0) + 1;
+            res.txs_per_signer.insert(signer, amount);
 
             if let Some(prior_nonce) =
-              res.last_nonce_in_mempool.insert((*signer, order.clone()), *nonce)
+              res.last_nonce_in_mempool.insert((signer, order.clone()), nonce)
             {
               assert_eq!(prior_nonce, nonce - 1);
             }
@@ -133,14 +133,14 @@ impl<D: Db, T: TransactionTrait> Mempool<D, T> {
         match app_tx.kind() {
           TransactionKind::Signed(order, Signed { signer, .. }) => {
             // Get the nonce from the blockchain
-            let Some(blockchain_next_nonce) = blockchain_next_nonce(*signer, order.clone()) else {
+            let Some(blockchain_next_nonce) = blockchain_next_nonce(signer, order.clone()) else {
               // Not a participant
               Err(TransactionError::InvalidSigner)?
             };
             let mut next_nonce = blockchain_next_nonce;
 
             if let Some(mempool_last_nonce) =
-              self.last_nonce_in_mempool.get(&(*signer, order.clone()))
+              self.last_nonce_in_mempool.get(&(signer, order.clone()))
             {
               assert!(*mempool_last_nonce >= blockchain_next_nonce);
               next_nonce = *mempool_last_nonce + 1;
@@ -148,14 +148,14 @@ impl<D: Db, T: TransactionTrait> Mempool<D, T> {
 
             // If we have too many transactions from this sender, don't add this yet UNLESS we are
             // this sender
-            let amount_in_pool = *self.txs_per_signer.get(signer).unwrap_or(&0) + 1;
+            let amount_in_pool = *self.txs_per_signer.get(&signer).unwrap_or(&0) + 1;
             if !internal && (amount_in_pool > ACCOUNT_MEMPOOL_LIMIT) {
               Err(TransactionError::TooManyInMempool)?;
             }
 
             verify_transaction(app_tx, self.genesis, &mut |_, _| Some(next_nonce))?;
-            self.last_nonce_in_mempool.insert((*signer, order.clone()), next_nonce);
-            self.txs_per_signer.insert(*signer, amount_in_pool);
+            self.last_nonce_in_mempool.insert((signer, order.clone()), next_nonce);
+            self.txs_per_signer.insert(signer, amount_in_pool);
           }
           TransactionKind::Unsigned => {
             // check we have the tx in the pool/chain
@@ -205,7 +205,7 @@ impl<D: Db, T: TransactionTrait> Mempool<D, T> {
     // Sort signed by nonce
     let nonce = |tx: &Transaction<T>| {
       if let TransactionKind::Signed(_, Signed { nonce, .. }) = tx.kind() {
-        *nonce
+        nonce
       } else {
         unreachable!()
       }
@@ -242,11 +242,11 @@ impl<D: Db, T: TransactionTrait> Mempool<D, T> {
 
     if let Some(tx) = self.txs.remove(tx) {
       if let TransactionKind::Signed(order, Signed { signer, nonce, .. }) = tx.kind() {
-        let amount = *self.txs_per_signer.get(signer).unwrap() - 1;
-        self.txs_per_signer.insert(*signer, amount);
+        let amount = *self.txs_per_signer.get(&signer).unwrap() - 1;
+        self.txs_per_signer.insert(signer, amount);
 
-        if self.last_nonce_in_mempool.get(&(*signer, order.clone())) == Some(nonce) {
-          self.last_nonce_in_mempool.remove(&(*signer, order));
+        if self.last_nonce_in_mempool.get(&(signer, order.clone())) == Some(&nonce) {
+          self.last_nonce_in_mempool.remove(&(signer, order));
         }
       }
     }

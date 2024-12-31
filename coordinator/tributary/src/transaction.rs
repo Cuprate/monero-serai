@@ -109,7 +109,7 @@ impl Signed {
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum TransactionKind<'a> {
+pub enum TransactionKind {
   /// This transaction should be provided by every validator, in an exact order.
   ///
   /// The contained static string names the orderer to use. This allows two distinct provided
@@ -137,14 +137,14 @@ pub enum TransactionKind<'a> {
   Unsigned,
 
   /// A signed transaction.
-  Signed(Vec<u8>, &'a Signed),
+  Signed(Vec<u8>, Signed),
 }
 
 // TODO: Should this be renamed TransactionTrait now that a literal Transaction exists?
 // Or should the literal Transaction be renamed to Event?
 pub trait Transaction: 'static + Send + Sync + Clone + Eq + Debug + ReadWrite {
   /// Return what type of transaction this is.
-  fn kind(&self) -> TransactionKind<'_>;
+  fn kind(&self) -> TransactionKind;
 
   /// Return the hash of this transaction.
   ///
@@ -198,8 +198,8 @@ pub(crate) fn verify_transaction<F: GAIN, T: Transaction>(
   match tx.kind() {
     TransactionKind::Provided(_) | TransactionKind::Unsigned => {}
     TransactionKind::Signed(order, Signed { signer, nonce, signature }) => {
-      if let Some(next_nonce) = get_and_increment_nonce(signer, &order) {
-        if *nonce != next_nonce {
+      if let Some(next_nonce) = get_and_increment_nonce(&signer, &order) {
+        if nonce != next_nonce {
           Err(TransactionError::InvalidNonce)?;
         }
       } else {
@@ -208,7 +208,7 @@ pub(crate) fn verify_transaction<F: GAIN, T: Transaction>(
       }
 
       // TODO: Use a batch verification here
-      if !signature.verify(*signer, tx.sig_hash(genesis)) {
+      if !signature.verify(signer, tx.sig_hash(genesis)) {
         Err(TransactionError::InvalidSignature)?;
       }
     }

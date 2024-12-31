@@ -60,8 +60,8 @@ impl ReadWrite for NonceTransaction {
 }
 
 impl TransactionTrait for NonceTransaction {
-  fn kind(&self) -> TransactionKind<'_> {
-    TransactionKind::Signed(vec![], &self.2)
+  fn kind(&self) -> TransactionKind {
+    TransactionKind::Signed(vec![], self.2.clone())
   }
 
   fn hash(&self) -> [u8; 32] {
