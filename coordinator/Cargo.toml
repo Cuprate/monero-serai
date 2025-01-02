@@ -37,6 +37,7 @@ scale = { package = "parity-scale-codec", version = "3", default-features = fals
 zalloc = { path = "../common/zalloc" }
 serai-db = { path = "../common/db" }
 serai-env = { path = "../common/env" }
+serai-task = { path = "../common/task", version = "0.1" }
 
 processor-messages = { package = "serai-processor-messages", path = "../processor/messages" }
 message-queue = { package = "serai-message-queue", path = "../message-queue" }

@@ -83,7 +83,7 @@ pub mod sign {
   #[derive(Clone, Copy, PartialEq, Eq, Hash, Encode, Decode, BorshSerialize, BorshDeserialize)]
   pub enum VariantSignId {
     Cosign(u64),
-    Batch(u32),
+    Batch([u8; 32]),
     SlashReport,
     Transaction([u8; 32]),
   }

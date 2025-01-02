@@ -52,7 +52,7 @@ pub fn borsh_deserialize_signature<R: borsh::io::Read>(
 
 // TODO: Remove this for solely Public?
 #[derive(
-  Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Encode, Decode, MaxEncodedLen, TypeInfo,
+  Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Encode, Decode, MaxEncodedLen, TypeInfo,
 )]
 #[cfg_attr(feature = "std", derive(Zeroize))]
 #[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]

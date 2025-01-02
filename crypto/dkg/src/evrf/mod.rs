@@ -106,7 +106,7 @@ pub struct Participation<C: Ciphersuite> {
 
 impl<C: Ciphersuite> Participation<C> {
   pub fn read<R: Read>(reader: &mut R, n: u16) -> io::Result<Self> {
-    // TODO: Replace `len` with some calculcation deterministic to the params
+    // TODO: Replace `len` with some calculation deterministic to the params
     let mut len = [0; 4];
     reader.read_exact(&mut len)?;
     let len = usize::try_from(u32::from_le_bytes(len)).expect("<32-bit platform?");

@@ -8332,6 +8332,7 @@ dependencies = [
  "serai-env",
  "serai-message-queue",
  "serai-processor-messages",
+ "serai-task",
  "sp-application-crypto",
  "sp-runtime",
  "tokio",

@@ -11,10 +11,10 @@ use ciphersuite::{
 };
 use schnorr::SchnorrSignature;
 
-use scale::{Encode, Decode};
+use scale::Encode;
 use borsh::{BorshSerialize, BorshDeserialize};
 
-use serai_client::primitives::PublicKey;
+use serai_client::primitives::SeraiAddress;
 
 use processor_messages::sign::VariantSignId;
 
@@ -27,31 +27,20 @@ use tributary::{
 
 /// The label for data from a signing protocol.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Encode, BorshSerialize, BorshDeserialize)]
-pub enum Label {
+pub enum SigningProtocolRound {
   /// A preprocess.
   Preprocess,
   /// A signature share.
   Share,
 }
 
-impl Label {
+impl SigningProtocolRound {
   fn nonce(&self) -> u32 {
     match self {
-      Label::Preprocess => 0,
-      Label::Share => 1,
+      SigningProtocolRound::Preprocess => 0,
+      SigningProtocolRound::Share => 1,
     }
   }
-}
-
-fn borsh_serialize_public<W: io::Write>(
-  public: &PublicKey,
-  writer: &mut W,
-) -> Result<(), io::Error> {
-  // This doesn't use `encode_to` as `encode_to` panics if the writer returns an error
-  writer.write_all(&public.encode())
-}
-fn borsh_deserialize_public<R: io::Read>(reader: &mut R) -> Result<PublicKey, io::Error> {
-  Decode::decode(&mut scale::IoReader(reader)).map_err(io::Error::other)
 }
 
 /// `tributary::Signed` without the nonce.
@@ -90,11 +79,7 @@ pub enum Transaction {
   /// A vote to remove a participant for invalid behavior
   RemoveParticipant {
     /// The participant to remove
-    #[borsh(
-      serialize_with = "borsh_serialize_public",
-      deserialize_with = "borsh_deserialize_public"
-    )]
-    participant: PublicKey,
+    participant: SeraiAddress,
     /// The transaction's signer and signature
     signed: Signed,
   },
@@ -119,7 +104,7 @@ pub enum Transaction {
     /// The attempt number of this signing protocol
     attempt: u32,
     // The signature share
-    confirmation_share: [u8; 32],
+    share: [u8; 32],
     /// The transaction's signer and signature
     signed: Signed,
   },
@@ -128,10 +113,45 @@ pub enum Transaction {
   ///
   /// When the time comes to start a new co-signing protocol, the most recent Substrate block will
   /// be the one selected to be cosigned.
-  CosignSubstrateBlock {
-    /// THe hash of the Substrate block to sign
-    hash: [u8; 32],
+  Cosign {
+    /// The hash of the Substrate block to sign
+    substrate_block_hash: [u8; 32],
   },
+
+  /// The cosign for a Substrate block
+  ///
+  /// After producing this cosign, we need to start work on the latest intended-to-be cosigned
+  /// block. That requires agreement on when this cosign was produced, which we solve by embedding
+  /// this cosign on chain.
+  ///
+  /// We ideally don't have this transaction at all. The coordinator, without access to any of the
+  /// key shares, could observe the FROST signing session and determine a successful completion.
+  /// Unfortunately, that functionality is not present in modular-frost, so we do need to support
+  /// *some* asynchronous flow (where the processor or P2P network informs us of the successful
+  /// completion).
+  ///
+  /// If we use a `Provided` transaction, that requires everyone observe this cosign.
+  ///
+  /// If we use an `Unsigned` transaction, we can't verify the cosign signature inside
+  /// `Transaction::verify` unless we embedded the full `SignedCosign` on-chain. The issue is since
+  /// a Tributary is stateless with regards to the on-chain logic, including `Transaction::verify`,
+  /// we can't verify the signature against the group's public key unless we also include that (but
+  /// then we open a DoS where arbitrary group keys are specified to cause inclusion of arbitrary
+  /// blobs on chain).
+  ///
+  /// If we use a `Signed` transaction, we mitigate the DoS risk by having someone to fatally
+  /// slash. We have horrible performance though as for 100 validators, all 100 will publish this
+  /// transaction.
+  ///
+  /// We could use a signed `Unsigned` transaction, where it includes a signer and signature but
+  /// isn't technically a Signed transaction. This lets us de-duplicate the transaction premised on
+  /// its contents.
+  ///
+  /// The optimal choice is likely to use a `Provided` transaction. We don't actually need to
+  /// observe the produced cosign (which is ephemeral). As long as it's agreed the cosign in
+  /// question no longer needs to produced, which would mean the cosigning protocol at-large
+  /// cosigning the block in question, it'd be safe to provide this and move on to the next cosign.
+  Cosigned { substrate_block_hash: [u8; 32] },
 
   /// Acknowledge a Substrate block
   ///
@@ -156,26 +176,27 @@ pub enum Transaction {
     hash: [u8; 32],
   },
 
-  /// The local view of slashes observed by the transaction's sender
-  SlashReport {
-    /// The slash points accrued by each validator
-    slash_points: Vec<u32>,
-    /// The transaction's signer and signature
-    signed: Signed,
-  },
-
+  /// Data from a signing protocol.
   Sign {
     /// The ID of the object being signed
     id: VariantSignId,
     /// The attempt number of this signing protocol
     attempt: u32,
     /// The label for this data within the signing protocol
-    label: Label,
+    label: SigningProtocolRound,
     /// The data itself
     ///
     /// There will be `n` blobs of data where `n` is the amount of key shares the validator sending
     /// this transaction has.
     data: Vec<Vec<u8>>,
+    /// The transaction's signer and signature
+    signed: Signed,
+  },
+
+  /// The local view of slashes observed by the transaction's sender
+  SlashReport {
+    /// The slash points accrued by each validator
+    slash_points: Vec<u32>,
     /// The transaction's signer and signature
     signed: Signed,
   },
@@ -208,7 +229,8 @@ impl TransactionTrait for Transaction {
         TransactionKind::Signed((b"DkgConfirmation", attempt).encode(), signed.nonce(1))
       }
 
-      Transaction::CosignSubstrateBlock { .. } => TransactionKind::Provided("CosignSubstrateBlock"),
+      Transaction::Cosign { .. } => TransactionKind::Provided("CosignSubstrateBlock"),
+      Transaction::Cosigned { .. } => TransactionKind::Provided("Cosigned"),
       Transaction::SubstrateBlock { .. } => TransactionKind::Provided("SubstrateBlock"),
       Transaction::Batch { .. } => TransactionKind::Provided("Batch"),
 
@@ -240,6 +262,8 @@ impl TransactionTrait for Transaction {
 
 impl Transaction {
   // Sign a transaction
+  //
+  // Panics if signing a transaction type which isn't `TransactionKind::Signed`
   pub fn sign<R: RngCore + CryptoRng>(
     &mut self,
     rng: &mut R,
@@ -254,7 +278,8 @@ impl Transaction {
         Transaction::DkgConfirmationPreprocess { ref mut signed, .. } => signed,
         Transaction::DkgConfirmationShare { ref mut signed, .. } => signed,
 
-        Transaction::CosignSubstrateBlock { .. } => panic!("signing CosignSubstrateBlock"),
+        Transaction::Cosign { .. } => panic!("signing CosignSubstrateBlock"),
+        Transaction::Cosigned { .. } => panic!("signing Cosigned"),
         Transaction::SubstrateBlock { .. } => panic!("signing SubstrateBlock"),
         Transaction::Batch { .. } => panic!("signing Batch"),
 

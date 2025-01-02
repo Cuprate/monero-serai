@@ -3,186 +3,344 @@ use std::collections::HashMap;
 use scale::Encode;
 use borsh::{BorshSerialize, BorshDeserialize};
 
-use ciphersuite::{group::GroupEncoding, Ciphersuite, Ristretto};
-use frost::Participant;
+use serai_client::{primitives::SeraiAddress, validator_sets::primitives::ValidatorSet};
 
-use serai_client::validator_sets::primitives::{KeyPair, ValidatorSet};
+use processor_messages::sign::VariantSignId;
 
-use processor_messages::coordinator::SubstrateSignableId;
+use serai_db::*;
 
-pub use serai_db::*;
+use crate::tributary::transaction::SigningProtocolRound;
 
-use tributary::ReadWrite;
-
-use crate::tributary::{Label, Transaction};
-
+/// A topic within the database which the group participates in
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Encode, BorshSerialize, BorshDeserialize)]
 pub enum Topic {
-  DkgConfirmation,
-  SubstrateSign(SubstrateSignableId),
-  Sign([u8; 32]),
+  /// Vote to remove a participant
+  RemoveParticipant { participant: SeraiAddress },
+
+  // DkgParticipation isn't represented here as participations are immediately sent to the
+  // processor, not accumulated within this databse
+  /// Participation in the signing protocol to confirm the DKG results on Substrate
+  DkgConfirmation { attempt: u32, label: SigningProtocolRound },
+
+  /// The local view of the SlashReport, to be aggregated into the final SlashReport
+  SlashReport,
+
+  /// Participation in a signing protocol
+  Sign { id: VariantSignId, attempt: u32, label: SigningProtocolRound },
 }
 
-// A struct to refer to a piece of data all validators will presumably provide a value for.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Encode)]
-pub struct DataSpecification {
-  pub topic: Topic,
-  pub label: Label,
-  pub attempt: u32,
+enum Participating {
+  Participated,
+  Everyone,
 }
 
-pub enum DataSet {
-  Participating(HashMap<Participant, Vec<u8>>),
-  NotParticipating,
+impl Topic {
+  // The topic used by the next attempt of this protocol
+  fn next_attempt_topic(self) -> Option<Topic> {
+    #[allow(clippy::match_same_arms)]
+    match self {
+      Topic::RemoveParticipant { .. } => None,
+      Topic::DkgConfirmation { attempt, label: _ } => Some(Topic::DkgConfirmation {
+        attempt: attempt + 1,
+        label: SigningProtocolRound::Preprocess,
+      }),
+      Topic::SlashReport { .. } => None,
+      Topic::Sign { id, attempt, label: _ } => {
+        Some(Topic::Sign { id, attempt: attempt + 1, label: SigningProtocolRound::Preprocess })
+      }
+    }
+  }
+
+  // The topic for the re-attempt to schedule
+  fn reattempt_topic(self) -> Option<(u32, Topic)> {
+    #[allow(clippy::match_same_arms)]
+    match self {
+      Topic::RemoveParticipant { .. } => None,
+      Topic::DkgConfirmation { attempt, label } => match label {
+        SigningProtocolRound::Preprocess => {
+          let attempt = attempt + 1;
+          Some((
+            attempt,
+            Topic::DkgConfirmation { attempt, label: SigningProtocolRound::Preprocess },
+          ))
+        }
+        SigningProtocolRound::Share => None,
+      },
+      Topic::SlashReport { .. } => None,
+      Topic::Sign { id, attempt, label } => match label {
+        SigningProtocolRound::Preprocess => {
+          let attempt = attempt + 1;
+          Some((attempt, Topic::Sign { id, attempt, label: SigningProtocolRound::Preprocess }))
+        }
+        SigningProtocolRound::Share => None,
+      },
+    }
+  }
+
+  /// The topic which precedes this topic as a prerequisite
+  ///
+  /// The preceding topic must define this topic as succeeding
+  fn preceding_topic(self) -> Option<Topic> {
+    #[allow(clippy::match_same_arms)]
+    match self {
+      Topic::RemoveParticipant { .. } => None,
+      Topic::DkgConfirmation { attempt, label } => match label {
+        SigningProtocolRound::Preprocess => None,
+        SigningProtocolRound::Share => {
+          Some(Topic::DkgConfirmation { attempt, label: SigningProtocolRound::Preprocess })
+        }
+      },
+      Topic::SlashReport { .. } => None,
+      Topic::Sign { id, attempt, label } => match label {
+        SigningProtocolRound::Preprocess => None,
+        SigningProtocolRound::Share => {
+          Some(Topic::Sign { id, attempt, label: SigningProtocolRound::Preprocess })
+        }
+      },
+    }
+  }
+
+  /// The topic which succeeds this topic, with this topic as a prerequisite
+  ///
+  /// The succeeding topic must define this topic as preceding
+  fn succeeding_topic(self) -> Option<Topic> {
+    #[allow(clippy::match_same_arms)]
+    match self {
+      Topic::RemoveParticipant { .. } => None,
+      Topic::DkgConfirmation { attempt, label } => match label {
+        SigningProtocolRound::Preprocess => {
+          Some(Topic::DkgConfirmation { attempt, label: SigningProtocolRound::Share })
+        }
+        SigningProtocolRound::Share => None,
+      },
+      Topic::SlashReport { .. } => None,
+      Topic::Sign { id, attempt, label } => match label {
+        SigningProtocolRound::Preprocess => {
+          Some(Topic::Sign { id, attempt, label: SigningProtocolRound::Share })
+        }
+        SigningProtocolRound::Share => None,
+      },
+    }
+  }
+
+  fn requires_whitelisting(&self) -> bool {
+    #[allow(clippy::match_same_arms)]
+    match self {
+      // We don't require whitelisting to remove a participant
+      Topic::RemoveParticipant { .. } => false,
+      // We don't require whitelisting for the first attempt, solely the re-attempts
+      Topic::DkgConfirmation { attempt, .. } => *attempt != 0,
+      // We don't require whitelisting for the slash report
+      Topic::SlashReport { .. } => false,
+      // We do require whitelisting for every sign protocol
+      Topic::Sign { .. } => true,
+    }
+  }
+
+  fn required_participation(&self, n: u64) -> u64 {
+    let _ = self;
+    // All of our topics require 2/3rds participation
+    ((2 * n) / 3) + 1
+  }
+
+  fn participating(&self) -> Participating {
+    #[allow(clippy::match_same_arms)]
+    match self {
+      Topic::RemoveParticipant { .. } => Participating::Everyone,
+      Topic::DkgConfirmation { .. } => Participating::Participated,
+      Topic::SlashReport { .. } => Participating::Everyone,
+      Topic::Sign { .. } => Participating::Participated,
+    }
+  }
 }
 
-pub enum Accumulation {
-  Ready(DataSet),
-  NotReady,
+/// The resulting data set from an accumulation
+pub enum DataSet<D: Borshy> {
+  /// Accumulating this did not produce a data set to act on
+  /// (non-existent, not ready, prior handled, not participating, etc.)
+  None,
+  /// The data set was ready and we are participating in this event
+  Participating(HashMap<SeraiAddress, D>),
 }
 
-// TODO: Move from genesis to set for indexing
+trait Borshy: BorshSerialize + BorshDeserialize {}
+impl<T: BorshSerialize + BorshDeserialize> Borshy for T {}
+
 create_db!(
-  Tributary {
-    SeraiBlockNumber: (hash: [u8; 32]) -> u64,
-    SeraiDkgCompleted: (set: ValidatorSet) -> [u8; 32],
+  CoordinatorTributary {
+    // The last handled tributary block's (number, hash)
+    LastHandledTributaryBlock: (set: ValidatorSet) -> (u64, [u8; 32]),
 
-    TributaryBlockNumber: (block: [u8; 32]) -> u32,
-    LastHandledBlock: (genesis: [u8; 32]) -> [u8; 32],
+    // The slash points a validator has accrued, with u64::MAX representing a fatal slash.
+    SlashPoints: (set: ValidatorSet, validator: SeraiAddress) -> u64,
 
-    // TODO: Revisit the point of this
-    FatalSlashes: (genesis: [u8; 32]) -> Vec<[u8; 32]>,
-    // TODO: Combine these two
-    FatallySlashed: (genesis: [u8; 32], account: [u8; 32]) -> (),
-    SlashPoints: (genesis: [u8; 32], account: [u8; 32]) -> u32,
+    // The latest Substrate block to cosign.
+    LatestSubstrateBlockToCosign: (set: ValidatorSet) -> [u8; 32],
 
-    VotedToRemove: (genesis: [u8; 32], voter: [u8; 32], to_remove: [u8; 32]) -> (),
-    VotesToRemove: (genesis: [u8; 32], to_remove: [u8; 32]) -> u16,
+    // The weight accumulated for a topic.
+    AccumulatedWeight: (set: ValidatorSet, topic: Topic) -> u64,
+    // The entries accumulated for a topic, by validator.
+    Accumulated: <D: Borshy>(set: ValidatorSet, topic: Topic, validator: SeraiAddress) -> D,
 
-    AttemptDb: (genesis: [u8; 32], topic: &Topic) -> u32,
-    ReattemptDb: (genesis: [u8; 32], block: u32) -> Vec<Topic>,
-    DataReceived: (genesis: [u8; 32], data_spec: &DataSpecification) -> u16,
-    DataDb: (genesis: [u8; 32], data_spec: &DataSpecification, signer_bytes: &[u8; 32]) -> Vec<u8>,
-
-    DkgParticipation: (genesis: [u8; 32], from: u16) -> Vec<u8>,
-    ConfirmationNonces: (genesis: [u8; 32], attempt: u32) -> HashMap<Participant, Vec<u8>>,
-    DkgKeyPair: (genesis: [u8; 32]) -> KeyPair,
-
-    PlanIds: (genesis: &[u8], block: u64) -> Vec<[u8; 32]>,
-
-    SignedTransactionDb: (order: &[u8], nonce: u32) -> Vec<u8>,
-
-    SlashReports: (genesis: [u8; 32], signer: [u8; 32]) -> Vec<u32>,
-    SlashReported: (genesis: [u8; 32]) -> u16,
-    SlashReportCutOff: (genesis: [u8; 32]) -> u64,
-    SlashReport: (set: ValidatorSet) -> Vec<([u8; 32], u32)>,
+    // Topics to be recognized as of a certain block number due to the reattempt protocol.
+    Reattempt: (set: ValidatorSet, block_number: u64) -> Vec<Topic>,
   }
 );
 
-impl FatalSlashes {
-  pub fn get_as_keys(getter: &impl Get, genesis: [u8; 32]) -> Vec<<Ristretto as Ciphersuite>::G> {
-    FatalSlashes::get(getter, genesis)
-      .unwrap_or(vec![])
-      .iter()
-      .map(|key| <Ristretto as Ciphersuite>::G::from_bytes(key).unwrap())
-      .collect::<Vec<_>>()
+pub struct TributaryDb;
+impl TributaryDb {
+  pub fn last_handled_tributary_block(
+    getter: &impl Get,
+    set: ValidatorSet,
+  ) -> Option<(u64, [u8; 32])> {
+    LastHandledTributaryBlock::get(getter, set)
   }
-}
-
-impl FatallySlashed {
-  pub fn set_fatally_slashed(txn: &mut impl DbTxn, genesis: [u8; 32], account: [u8; 32]) {
-    Self::set(txn, genesis, account, &());
-    let mut existing = FatalSlashes::get(txn, genesis).unwrap_or_default();
-
-    // Don't append if we already have it, which can occur upon multiple faults
-    if existing.iter().any(|existing| existing == &account) {
-      return;
-    }
-
-    existing.push(account);
-    FatalSlashes::set(txn, genesis, &existing);
-  }
-}
-
-impl AttemptDb {
-  pub fn recognize_topic(txn: &mut impl DbTxn, genesis: [u8; 32], topic: Topic) {
-    Self::set(txn, genesis, &topic, &0u32);
-  }
-
-  pub fn start_next_attempt(txn: &mut impl DbTxn, genesis: [u8; 32], topic: Topic) -> u32 {
-    let next =
-      Self::attempt(txn, genesis, topic).expect("starting next attempt for unknown topic") + 1;
-    Self::set(txn, genesis, &topic, &next);
-    next
-  }
-
-  pub fn attempt(getter: &impl Get, genesis: [u8; 32], topic: Topic) -> Option<u32> {
-    let attempt = Self::get(getter, genesis, &topic);
-    // Don't require explicit recognition of the DkgConfirmation topic as it starts when the chain
-    // does
-    // Don't require explicit recognition of the SlashReport topic as it isn't a DoS risk and it
-    // should always happen (eventually)
-    if attempt.is_none() &&
-      ((topic == Topic::DkgConfirmation) ||
-        (topic == Topic::SubstrateSign(SubstrateSignableId::SlashReport)))
-    {
-      return Some(0);
-    }
-    attempt
-  }
-}
-
-impl ReattemptDb {
-  pub fn schedule_reattempt(
+  pub fn set_last_handled_tributary_block(
     txn: &mut impl DbTxn,
-    genesis: [u8; 32],
-    current_block_number: u32,
-    topic: Topic,
+    set: ValidatorSet,
+    block_number: u64,
+    block_hash: [u8; 32],
   ) {
-    // 5 minutes
-    #[cfg(not(feature = "longer-reattempts"))]
-    const BASE_REATTEMPT_DELAY: u32 = (5 * 60 * 1000) / tributary::tendermint::TARGET_BLOCK_TIME;
-
-    // 10 minutes, intended for latent environments like the GitHub CI
-    #[cfg(feature = "longer-reattempts")]
-    const BASE_REATTEMPT_DELAY: u32 = (10 * 60 * 1000) / tributary::tendermint::TARGET_BLOCK_TIME;
-
-    // 5 minutes for attempts 0 ..= 2, 10 minutes for attempts 3 ..= 5, 15 minutes for attempts > 5
-    // Assumes no event will take longer than 15 minutes, yet grows the time in case there are
-    // network bandwidth issues
-    let reattempt_delay = BASE_REATTEMPT_DELAY *
-      ((AttemptDb::attempt(txn, genesis, topic)
-        .expect("scheduling re-attempt for unknown topic") /
-        3) +
-        1)
-      .min(3);
-    let upon_block = current_block_number + reattempt_delay;
-
-    let mut reattempts = Self::get(txn, genesis, upon_block).unwrap_or(vec![]);
-    reattempts.push(topic);
-    Self::set(txn, genesis, upon_block, &reattempts);
+    LastHandledTributaryBlock::set(txn, set, &(block_number, block_hash));
   }
 
-  pub fn take(txn: &mut impl DbTxn, genesis: [u8; 32], block_number: u32) -> Vec<Topic> {
-    let res = Self::get(txn, genesis, block_number).unwrap_or(vec![]);
-    if !res.is_empty() {
-      Self::del(txn, genesis, block_number);
+  pub fn recognize_topic(txn: &mut impl DbTxn, set: ValidatorSet, topic: Topic) {
+    AccumulatedWeight::set(txn, set, topic, &0);
+  }
+
+  pub fn start_of_block(txn: &mut impl DbTxn, set: ValidatorSet, block_number: u64) {
+    for topic in Reattempt::take(txn, set, block_number).unwrap_or(vec![]) {
+      // TODO: Slash all people who preprocessed but didn't share
+      Self::recognize_topic(txn, set, topic);
     }
-    res
   }
-}
 
-impl SignedTransactionDb {
-  pub fn take_signed_transaction(
+  pub fn fatal_slash(
     txn: &mut impl DbTxn,
-    order: &[u8],
-    nonce: u32,
-  ) -> Option<Transaction> {
-    let res = SignedTransactionDb::get(txn, order, nonce)
-      .map(|bytes| Transaction::read(&mut bytes.as_slice()).unwrap());
-    if res.is_some() {
-      Self::del(txn, order, nonce);
+    set: ValidatorSet,
+    validator: SeraiAddress,
+    reason: &str,
+  ) {
+    log::warn!("{validator} fatally slashed: {reason}");
+    SlashPoints::set(txn, set, validator, &u64::MAX);
+  }
+
+  pub fn is_fatally_slashed(getter: &impl Get, set: ValidatorSet, validator: SeraiAddress) -> bool {
+    SlashPoints::get(getter, set, validator).unwrap_or(0) == u64::MAX
+  }
+
+  #[allow(clippy::too_many_arguments)]
+  pub fn accumulate<D: Borshy>(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+    validators: &[SeraiAddress],
+    total_weight: u64,
+    block_number: u64,
+    topic: Topic,
+    validator: SeraiAddress,
+    validator_weight: u64,
+    data: &D,
+  ) -> DataSet<D> {
+    // This function will only be called once for a (validator, topic) tuple due to how we handle
+    // nonces on transactions (deterministically to the topic)
+
+    let accumulated_weight = AccumulatedWeight::get(txn, set, topic);
+    if topic.requires_whitelisting() && accumulated_weight.is_none() {
+      Self::fatal_slash(txn, set, validator, "participated in unrecognized topic");
+      return DataSet::None;
     }
-    res
+    let mut accumulated_weight = accumulated_weight.unwrap_or(0);
+
+    // Check if there's a preceding topic, this validator participated
+    let preceding_topic = topic.preceding_topic();
+    if let Some(preceding_topic) = preceding_topic {
+      if Accumulated::<D>::get(txn, set, preceding_topic, validator).is_none() {
+        Self::fatal_slash(
+          txn,
+          set,
+          validator,
+          "participated in topic without participating in prior",
+        );
+        return DataSet::None;
+      }
+    }
+
+    // The complete lack of validation on the data by these NOPs opens the potential for spam here
+
+    // If we've already accumulated past the threshold, NOP
+    if accumulated_weight >= topic.required_participation(total_weight) {
+      return DataSet::None;
+    }
+    // If this is for an old attempt, NOP
+    if let Some(next_attempt_topic) = topic.next_attempt_topic() {
+      if AccumulatedWeight::get(txn, set, next_attempt_topic).is_some() {
+        return DataSet::None;
+      }
+    }
+
+    // Accumulate the data
+    accumulated_weight += validator_weight;
+    AccumulatedWeight::set(txn, set, topic, &accumulated_weight);
+    Accumulated::set(txn, set, topic, validator, data);
+
+    // Check if we now cross the weight threshold
+    if accumulated_weight >= topic.required_participation(total_weight) {
+      // Queue this for re-attempt after enough time passes
+      if let Some((attempt, reattempt_topic)) = topic.reattempt_topic() {
+        // 5 minutes
+        #[cfg(not(feature = "longer-reattempts"))]
+        const BASE_REATTEMPT_DELAY: u32 =
+          (5u32 * 60 * 1000).div_ceil(tributary::tendermint::TARGET_BLOCK_TIME);
+
+        // 10 minutes, intended for latent environments like the GitHub CI
+        #[cfg(feature = "longer-reattempts")]
+        const BASE_REATTEMPT_DELAY: u32 =
+          (10u32 * 60 * 1000).div_ceil(tributary::tendermint::TARGET_BLOCK_TIME);
+
+        // Linearly scale the time for the protocol with the attempt number
+        let blocks_till_reattempt = u64::from(attempt * BASE_REATTEMPT_DELAY);
+
+        let recognize_at = block_number + blocks_till_reattempt;
+        let mut queued = Reattempt::get(txn, set, recognize_at).unwrap_or(Vec::with_capacity(1));
+        queued.push(reattempt_topic);
+        Reattempt::set(txn, set, recognize_at, &queued);
+      }
+
+      // Register the succeeding topic
+      let succeeding_topic = topic.succeeding_topic();
+      if let Some(succeeding_topic) = succeeding_topic {
+        Self::recognize_topic(txn, set, succeeding_topic);
+      }
+
+      // Fetch and return all participations
+      let mut data_set = HashMap::with_capacity(validators.len());
+      for validator in validators {
+        if let Some(data) = Accumulated::<D>::get(txn, set, topic, *validator) {
+          // Clean this data up if there's not a succeeding topic
+          // If there is, we wait as the succeeding topic checks our participation in this topic
+          if succeeding_topic.is_none() {
+            Accumulated::<D>::del(txn, set, topic, *validator);
+          }
+          // If this *was* the succeeding topic, clean up the preceding topic's data
+          if let Some(preceding_topic) = preceding_topic {
+            Accumulated::<D>::del(txn, set, preceding_topic, *validator);
+          }
+          data_set.insert(*validator, data);
+        }
+      }
+      let participated = data_set.contains_key(&validator);
+      match topic.participating() {
+        Participating::Participated => {
+          if participated {
+            DataSet::Participating(data_set)
+          } else {
+            DataSet::None
+          }
+        }
+        Participating::Everyone => DataSet::Participating(data_set),
+      }
+    } else {
+      DataSet::None
+    }
   }
 }
