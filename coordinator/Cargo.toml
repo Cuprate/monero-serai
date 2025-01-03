@@ -56,6 +56,8 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "sync", "time", "macros"] }
 libp2p = { version = "0.52", default-features = false, features = ["tokio", "tcp", "noise", "yamux", "request-response", "gossipsub", "macros"] }
 
+serai-cosign = { path = "./cosign" }
+
 [dev-dependencies]
 tributary = { package = "tributary-chain", path = "./tributary", features = ["tests"] }
 sp-application-crypto = { git = "https://github.com/serai-dex/substrate", default-features = false, features = ["std"] }

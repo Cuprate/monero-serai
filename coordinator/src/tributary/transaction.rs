@@ -43,12 +43,14 @@ impl SigningProtocolRound {
   }
 }
 
-/// `tributary::Signed` without the nonce.
+/// `tributary::Signed` but without the nonce.
 ///
 /// All of our nonces are deterministic to the type of transaction and fields within.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Signed {
+  /// The signer.
   pub signer: <Ristretto as Ciphersuite>::G,
+  /// The signature.
   pub signature: SchnorrSignature<Ristretto>,
 }
 
