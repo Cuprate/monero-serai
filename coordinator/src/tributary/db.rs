@@ -189,6 +189,8 @@ create_db!(
 
     // The latest Substrate block to cosign.
     LatestSubstrateBlockToCosign: (set: ValidatorSet) -> [u8; 32],
+    // If we're actively cosigning or not.
+    ActivelyCosigning: (set: ValidatorSet) -> (),
 
     // The weight accumulated for a topic.
     AccumulatedWeight: (set: ValidatorSet, topic: Topic) -> u64,
@@ -235,6 +237,33 @@ impl TributaryDb {
     substrate_block_hash: [u8; 32],
   ) {
     LatestSubstrateBlockToCosign::set(txn, set, &substrate_block_hash);
+  }
+  pub(crate) fn actively_cosigning(txn: &mut impl DbTxn, set: ValidatorSet) -> bool {
+    ActivelyCosigning::get(txn, set).is_some()
+  }
+  pub(crate) fn start_cosigning(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+    substrate_block_number: u64,
+  ) {
+    assert!(
+      ActivelyCosigning::get(txn, set).is_none(),
+      "starting cosigning while already cosigning"
+    );
+    ActivelyCosigning::set(txn, set, &());
+
+    TributaryDb::recognize_topic(
+      txn,
+      set,
+      Topic::Sign {
+        id: VariantSignId::Cosign(substrate_block_number),
+        attempt: 0,
+        round: SigningProtocolRound::Preprocess,
+      },
+    );
+  }
+  pub(crate) fn finish_cosigning(txn: &mut impl DbTxn, set: ValidatorSet) {
+    assert!(ActivelyCosigning::take(txn, set).is_some(), "finished cosigning but not cosigning");
   }
 
   pub(crate) fn recognize_topic(txn: &mut impl DbTxn, set: ValidatorSet, topic: Topic) {

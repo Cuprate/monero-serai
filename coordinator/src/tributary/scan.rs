@@ -36,6 +36,34 @@ struct ScanBlock<'a, D: DbTxn, TD: Db> {
   tributary: &'a TributaryReader<TD, Transaction>,
 }
 impl<'a, D: DbTxn, TD: Db> ScanBlock<'a, D, TD> {
+  fn potentially_start_cosign(&mut self) {
+    // Don't start a new cosigning instance if we're actively running one
+    if TributaryDb::actively_cosigning(self.txn, self.set) {
+      return;
+    }
+
+    // Start cosigning the latest intended-to-be-cosigned block
+    let Some(latest_substrate_block_to_cosign) =
+      TributaryDb::latest_substrate_block_to_cosign(self.txn, self.set)
+    else {
+      return;
+    };
+
+    let substrate_block_number = todo!("TODO");
+
+    // Mark us as actively cosigning
+    TributaryDb::start_cosigning(self.txn, self.set, substrate_block_number);
+    // Send the message for the processor to start signing
+    TributaryDb::send_message(
+      self.txn,
+      self.set,
+      messages::coordinator::CoordinatorMessage::CosignSubstrateBlock {
+        session: self.set.session,
+        block_number: substrate_block_number,
+        block: latest_substrate_block_to_cosign,
+      },
+    );
+  }
   fn handle_application_tx(&mut self, block_number: u64, tx: Transaction) {
     let signer = |signed: Signed| SeraiAddress(signed.signer.to_bytes());
 
@@ -105,41 +133,25 @@ impl<'a, D: DbTxn, TD: Db> ScanBlock<'a, D, TD> {
       Transaction::Cosign { substrate_block_hash } => {
         // Update the latest intended-to-be-cosigned Substrate block
         TributaryDb::set_latest_substrate_block_to_cosign(self.txn, self.set, substrate_block_hash);
-
-        // TODO: If we aren't currently cosigning a block, start cosigning this one
+        // Start a new cosign if we weren't already working on one
+        self.potentially_start_cosign();
       }
       Transaction::Cosigned { substrate_block_hash } => {
-        // Start cosigning the latest intended-to-be-cosigned block
+        TributaryDb::finish_cosigning(self.txn, self.set);
+
+        // Fetch the latest intended-to-be-cosigned block
         let Some(latest_substrate_block_to_cosign) =
           TributaryDb::latest_substrate_block_to_cosign(self.txn, self.set)
         else {
           return;
         };
-        // If this is the block we just cosigned, return
+        // If this is the block we just cosigned, return, preventing us from signing it again
         if latest_substrate_block_to_cosign == substrate_block_hash {
           return;
         }
-        let substrate_block_number = todo!("TODO");
-        // Whitelist the topic
-        TributaryDb::recognize_topic(
-          self.txn,
-          self.set,
-          Topic::Sign {
-            id: VariantSignId::Cosign(substrate_block_number),
-            attempt: 0,
-            round: SigningProtocolRound::Preprocess,
-          },
-        );
-        // Send the message for the processor to start signing
-        TributaryDb::send_message(
-          self.txn,
-          self.set,
-          messages::coordinator::CoordinatorMessage::CosignSubstrateBlock {
-            session: self.set.session,
-            block_number: substrate_block_number,
-            block: substrate_block_hash,
-          },
-        );
+
+        // Since we do have a new cosign to work on, start it
+        self.potentially_start_cosign();
       }
       Transaction::SubstrateBlock { hash } => {
         // Whitelist all of the IDs this Substrate block causes to be signed
