@@ -17,7 +17,7 @@ use serai_cosign::SignedCosign;
 const MAX_LIBP2P_REQRES_MESSAGE_SIZE: usize =
   (tributary::BLOCK_SIZE_LIMIT * crate::p2p::heartbeat::BLOCKS_PER_BATCH) + 1024;
 
-const PROTOCOL: &str = "/serai/coordinator";
+const PROTOCOL: &str = "/serai/coordinator/reqres/1.0.0";
 
 /// Requests which can be made via the request-response protocol.
 #[derive(Clone, Copy, Debug, BorshSerialize, BorshDeserialize)]

@@ -1,1 +1,70 @@
+use core::time::Duration;
 
+use blake2::{Digest, Blake2s256};
+
+use scale::Encode;
+use borsh::{BorshSerialize, BorshDeserialize};
+use serai_client::validator_sets::primitives::ValidatorSet;
+
+use libp2p::gossipsub::{
+  IdentTopic, MessageId, MessageAuthenticity, ValidationMode, ConfigBuilder, IdentityTransform,
+  AllowAllSubscriptionFilter, Behaviour,
+};
+
+use serai_cosign::SignedCosign;
+
+// Block size limit + 16 KB of space for signatures/metadata
+const MAX_LIBP2P_GOSSIP_MESSAGE_SIZE: usize = tributary::BLOCK_SIZE_LIMIT + 16384;
+
+const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(80);
+
+const LIBP2P_PROTOCOL: &str = "/serai/coordinator/gossip/1.0.0";
+const BASE_TOPIC: &str = "/";
+
+fn topic_for_set(set: ValidatorSet) -> IdentTopic {
+  IdentTopic::new(format!("/set/{}", hex::encode(set.encode())))
+}
+
+#[derive(Clone, BorshSerialize, BorshDeserialize)]
+pub(crate) enum Message {
+  Tribuary { genesis: [u8; 32], message: Vec<u8> },
+  Cosign(SignedCosign),
+}
+
+pub(crate) type Behavior = Behaviour<IdentityTransform, AllowAllSubscriptionFilter>;
+
+pub(crate) fn new_behavior() -> Behavior {
+  // The latency used by the Tendermint protocol, used here as the gossip epoch duration
+  // libp2p-rs defaults to 1 second, whereas ours will be ~2
+  let heartbeat_interval = tributary::tendermint::LATENCY_TIME;
+  // The amount of heartbeats which will occur within a single Tributary block
+  let heartbeats_per_block = tributary::tendermint::TARGET_BLOCK_TIME.div_ceil(heartbeat_interval);
+  // libp2p-rs defaults to 5, whereas ours will be ~8
+  let heartbeats_to_keep = 2 * heartbeats_per_block;
+  // libp2p-rs defaults to 3 whereas ours will be ~4
+  let heartbeats_to_gossip = heartbeats_per_block;
+
+  let config = ConfigBuilder::default()
+    .protocol_id_prefix(LIBP2P_PROTOCOL)
+    .history_length(usize::try_from(heartbeats_to_keep).unwrap())
+    .history_gossip(usize::try_from(heartbeats_to_gossip).unwrap())
+    .heartbeat_interval(Duration::from_millis(heartbeat_interval.into()))
+    .max_transmit_size(MAX_LIBP2P_GOSSIP_MESSAGE_SIZE)
+    .idle_timeout(KEEP_ALIVE_INTERVAL + Duration::from_secs(5))
+    .duplicate_cache_time(Duration::from_millis((heartbeats_to_keep * heartbeat_interval).into()))
+    .validation_mode(ValidationMode::Anonymous)
+    // Uses a content based message ID to avoid duplicates as much as possible
+    .message_id_fn(|msg| {
+      MessageId::new(&Blake2s256::digest([msg.topic.as_str().as_bytes(), &msg.data].concat()))
+    })
+    .build();
+
+  // TODO: Don't use IdentityTransform here. Authenticate using validator keys
+  let mut gossipsub = Behavior::new(MessageAuthenticity::Anonymous, config.unwrap()).unwrap();
+
+  // Subscribe to the base topic
+  let topic = IdentTopic::new(BASE_TOPIC);
+  let _ = gossipsub.subscribe(&topic);
+
+  gossipsub
+}
