@@ -41,22 +41,21 @@ impl<TD: Db> ContinuallyRan for HeartbeatTask<TD> {
       // If our blockchain hasn't had a block in the past minute, trigger the heartbeat protocol
       const TIME_TO_TRIGGER_SYNCING: Duration = Duration::from_secs(60);
 
-      // Fetch the state from the tip of the blockchain
-      let state = |reader: &TributaryReader<_, _>| {
-        let tip = reader.tip();
-        let block_time = if let Some(time_of_block) = reader.time_of_block(&tip) {
+      let mut tip = self.reader.tip();
+      let time_since = {
+        let block_time = if let Some(time_of_block) = self.reader.time_of_block(&tip) {
           SystemTime::UNIX_EPOCH + Duration::from_secs(time_of_block)
         } else {
           // If we couldn't fetch this block's time, assume it's old
           // We don't want to declare its unix time as 0 and claim it's 50+ years old though
+          log::warn!(
+            "heartbeat task couldn't fetch the time of a block, flagging it as a minute old"
+          );
           SystemTime::now() - TIME_TO_TRIGGER_SYNCING
         };
-        (tip, SystemTime::now().duration_since(block_time).unwrap_or(Duration::ZERO))
+        SystemTime::now().duration_since(block_time).unwrap_or(Duration::ZERO)
       };
-
-      // The current state, and a boolean of it's stale
-      let (mut tip, mut time_since) = state(&self.reader);
-      let mut state_is_stale = false;
+      let mut tip_is_stale = false;
 
       let mut synced_block = false;
       if TIME_TO_TRIGGER_SYNCING <= time_since {
@@ -71,9 +70,9 @@ impl<TD: Db> ContinuallyRan for HeartbeatTask<TD> {
         'peer: for peer in self.p2p.peers(self.set.network).await {
           loop {
             // Create the request for blocks
-            if state_is_stale {
-              (tip, time_since) = state(&self.reader);
-              state_is_stale = false;
+            if tip_is_stale {
+              tip = self.reader.tip();
+              tip_is_stale = false;
             }
             let request = Request::Heartbeat { set: self.set, latest_block_hash: tip };
             let Ok(Response::Blocks(blocks)) = peer.send(request).await else { continue 'peer };
@@ -96,8 +95,8 @@ impl<TD: Db> ContinuallyRan for HeartbeatTask<TD> {
                 continue 'peer;
               }
 
-              // Because we synced a block, flag the state as stale
-              state_is_stale = true;
+              // Because we synced a block, flag the tip as stale
+              tip_is_stale = true;
               // And that we did sync a block
               synced_block = true;
             }
@@ -109,6 +108,16 @@ impl<TD: Db> ContinuallyRan for HeartbeatTask<TD> {
               continue 'peer;
             }
           }
+        }
+
+        // This will cause the tak to be run less and less often, ensuring we aren't spamming the
+        // net if we legitimately aren't making progress
+        if !synced_block {
+          Err(format!(
+            "tried to sync blocks for {:?} since we haven't seen one in {} seconds but didn't",
+            self.set,
+            time_since.as_secs(),
+          ))?;
         }
       }
 
