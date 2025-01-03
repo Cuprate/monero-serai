@@ -114,8 +114,8 @@ pub struct Slash {
       deserialize_with = "serai_primitives::borsh_deserialize_public"
     )
   )]
-  key: Public,
-  points: u32,
+  pub key: Public,
+  pub points: u32,
 }
 #[derive(Clone, PartialEq, Eq, Debug, Encode, Decode, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]

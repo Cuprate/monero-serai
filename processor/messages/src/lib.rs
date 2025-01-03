@@ -22,9 +22,13 @@ pub mod key_gen {
 
   #[derive(Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
   pub enum CoordinatorMessage {
-    // Instructs the Processor to begin the key generation process.
+    /// Instructs the Processor to begin the key generation process.
+    ///
+    /// This is sent by the Coordinator when it creates the Tributary (TODO).
     GenerateKey { session: Session, threshold: u16, evrf_public_keys: Vec<([u8; 32], Vec<u8>)> },
-    // Received participations for the specified key generation protocol.
+    /// Received participations for the specified key generation protocol.
+    ///
+    /// This is sent by the Coordinator's Tributary scanner.
     Participation { session: Session, participant: Participant, participation: Vec<u8> },
   }
 
@@ -113,11 +117,17 @@ pub mod sign {
 
   #[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
   pub enum CoordinatorMessage {
-    // Received preprocesses for the specified signing protocol.
+    /// Received preprocesses for the specified signing protocol.
+    ///
+    /// This is sent by the Coordinator's Tributary scanner.
     Preprocesses { id: SignId, preprocesses: HashMap<Participant, Vec<u8>> },
     // Received shares for the specified signing protocol.
+    ///
+    /// This is sent by the Coordinator's Tributary scanner.
     Shares { id: SignId, shares: HashMap<Participant, Vec<u8>> },
     // Re-attempt a signing protocol.
+    ///
+    /// This is sent by the Coordinator's Tributary re-attempt scheduling logic.
     Reattempt { id: SignId },
   }
 
@@ -157,7 +167,13 @@ pub mod coordinator {
 
   #[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
   pub enum CoordinatorMessage {
+    /// Cosign the specified Substrate block.
+    ///
+    /// This is sent by the Coordinator's Tributary scanner.
     CosignSubstrateBlock { session: Session, block_number: u64, block: [u8; 32] },
+    /// Sign the slash report for this session.
+    ///
+    /// This is sent by the Coordinator's Tributary scanner.
     SignSlashReport { session: Session, report: Vec<Slash> },
   }
 
@@ -196,12 +212,18 @@ pub mod substrate {
   #[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
   pub enum CoordinatorMessage {
     /// Keys set on the Serai blockchain.
+    ///
+    /// This is set by the Coordinator's Substrate canonical event stream.
     SetKeys { serai_time: u64, session: Session, key_pair: KeyPair },
     /// Slashes reported on the Serai blockchain OR the process timed out.
     ///
     /// This is the final message for a session,
+    ///
+    /// This is set by the Coordinator's Substrate canonical event stream.
     SlashesReported { session: Session },
     /// A block from Serai with relevance to this processor.
+    ///
+    /// This is set by the Coordinator's Substrate canonical event stream.
     Block {
       serai_block_number: u64,
       batch: Option<ExecutedBatch>,

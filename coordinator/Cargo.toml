@@ -39,7 +39,7 @@ serai-db = { path = "../common/db" }
 serai-env = { path = "../common/env" }
 serai-task = { path = "../common/task", version = "0.1" }
 
-processor-messages = { package = "serai-processor-messages", path = "../processor/messages" }
+messages = { package = "serai-processor-messages", path = "../processor/messages" }
 message-queue = { package = "serai-message-queue", path = "../message-queue" }
 tributary = { package = "tributary-chain", path = "./tributary" }
 

@@ -14,9 +14,9 @@ use schnorr::SchnorrSignature;
 use scale::Encode;
 use borsh::{BorshSerialize, BorshDeserialize};
 
-use serai_client::primitives::SeraiAddress;
+use serai_client::{primitives::SeraiAddress, validator_sets::primitives::MAX_KEY_SHARES_PER_SET};
 
-use processor_messages::sign::VariantSignId;
+use messages::sign::VariantSignId;
 
 use tributary::{
   ReadWrite,
@@ -25,7 +25,7 @@ use tributary::{
   },
 };
 
-/// The label for data from a signing protocol.
+/// The round this data is for, within a signing protocol.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Encode, BorshSerialize, BorshDeserialize)]
 pub enum SigningProtocolRound {
   /// A preprocess.
@@ -182,8 +182,8 @@ pub enum Transaction {
     id: VariantSignId,
     /// The attempt number of this signing protocol
     attempt: u32,
-    /// The label for this data within the signing protocol
-    label: SigningProtocolRound,
+    /// The round this data is for, within the signing protocol
+    round: SigningProtocolRound,
     /// The data itself
     ///
     /// There will be `n` blobs of data where `n` is the amount of key shares the validator sending
@@ -234,8 +234,8 @@ impl TransactionTrait for Transaction {
       Transaction::SubstrateBlock { .. } => TransactionKind::Provided("SubstrateBlock"),
       Transaction::Batch { .. } => TransactionKind::Provided("Batch"),
 
-      Transaction::Sign { id, attempt, label, signed, .. } => {
-        TransactionKind::Signed((b"Sign", id, attempt).encode(), signed.nonce(label.nonce()))
+      Transaction::Sign { id, attempt, round, signed, .. } => {
+        TransactionKind::Signed((b"Sign", id, attempt).encode(), signed.nonce(round.nonce()))
       }
 
       Transaction::SlashReport { signed, .. } => {
@@ -253,9 +253,37 @@ impl TransactionTrait for Transaction {
     Blake2b::<U32>::digest(&tx).into()
   }
 
-  // We don't have any verification logic embedded into the transaction. We just slash anyone who
-  // publishes an invalid transaction.
+  // This is a stateless verification which we use to enforce some size limits.
   fn verify(&self) -> Result<(), TransactionError> {
+    #[allow(clippy::match_same_arms)]
+    match self {
+      // Fixed-length TX
+      Transaction::RemoveParticipant { .. } => {}
+
+      // TODO: MAX_DKG_PARTICIPATION_LEN
+      Transaction::DkgParticipation { .. } => {}
+      // These are fixed-length TXs
+      Transaction::DkgConfirmationPreprocess { .. } | Transaction::DkgConfirmationShare { .. } => {}
+
+      // Provided TXs
+      Transaction::Cosign { .. } |
+      Transaction::Cosigned { .. } |
+      Transaction::SubstrateBlock { .. } |
+      Transaction::Batch { .. } => {}
+
+      Transaction::Sign { data, .. } => {
+        if data.len() > usize::try_from(MAX_KEY_SHARES_PER_SET).unwrap() {
+          Err(TransactionError::InvalidContent)?
+        }
+        // TODO: MAX_SIGN_LEN
+      }
+
+      Transaction::SlashReport { slash_points, .. } => {
+        if slash_points.len() > usize::try_from(MAX_KEY_SHARES_PER_SET).unwrap() {
+          Err(TransactionError::InvalidContent)?
+        }
+      }
+    };
     Ok(())
   }
 }

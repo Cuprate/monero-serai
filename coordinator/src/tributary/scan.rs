@@ -3,10 +3,13 @@ use std::collections::HashMap;
 
 use ciphersuite::group::GroupEncoding;
 
-use serai_client::{primitives::SeraiAddress, validator_sets::primitives::ValidatorSet};
+use serai_client::{
+  primitives::SeraiAddress,
+  validator_sets::primitives::{ValidatorSet, Slash},
+};
 
 use tributary::{
-  Signed as TributarySigned, TransactionError, TransactionKind, TransactionTrait,
+  Signed as TributarySigned, TransactionKind, TransactionTrait,
   Transaction as TributaryTransaction, Block, TributaryReader,
   tendermint::{
     tx::{TendermintTx, Evidence, decode_signed_message},
@@ -17,9 +20,11 @@ use tributary::{
 use serai_db::*;
 use serai_task::ContinuallyRan;
 
+use messages::sign::VariantSignId;
+
 use crate::tributary::{
   db::*,
-  transaction::{Signed, Transaction},
+  transaction::{SigningProtocolRound, Signed, Transaction},
 };
 
 struct ScanBlock<'a, D: DbTxn, TD: Db> {
@@ -43,9 +48,21 @@ impl<'a, D: DbTxn, TD: Db> ScanBlock<'a, D, TD> {
     }
 
     match tx {
+      // Accumulate this vote and fatally slash the participant if past the threshold
       Transaction::RemoveParticipant { participant, signed } => {
-        // Accumulate this vote and fatally slash the participant if past the threshold
         let signer = signer(signed);
+
+        // Check the participant voted to be removed actually exists
+        if !self.validators.iter().any(|validator| *validator == participant) {
+          TributaryDb::fatal_slash(
+            self.txn,
+            self.set,
+            signer,
+            "voted to remove non-existent participant",
+          );
+          return;
+        }
+
         match TributaryDb::accumulate(
           self.txn,
           self.set,
@@ -59,14 +76,22 @@ impl<'a, D: DbTxn, TD: Db> ScanBlock<'a, D, TD> {
         ) {
           DataSet::None => {}
           DataSet::Participating(_) => {
-            TributaryDb::fatal_slash(self.txn, self.set, participant, "voted to remove")
+            TributaryDb::fatal_slash(self.txn, self.set, participant, "voted to remove");
           }
-        }
+        };
       }
 
+      // Send the participation to the processor
       Transaction::DkgParticipation { participation, signed } => {
-        // Send the participation to the processor
-        todo!("TODO")
+        TributaryDb::send_message(
+          self.txn,
+          self.set,
+          messages::key_gen::CoordinatorMessage::Participation {
+            session: self.set.session,
+            participant: todo!("TODO"),
+            participation,
+          },
+        );
       }
       Transaction::DkgConfirmationPreprocess { attempt, preprocess, signed } => {
         // Accumulate the preprocesses into our own FROST attempt manager
@@ -79,11 +104,42 @@ impl<'a, D: DbTxn, TD: Db> ScanBlock<'a, D, TD> {
 
       Transaction::Cosign { substrate_block_hash } => {
         // Update the latest intended-to-be-cosigned Substrate block
-        todo!("TODO")
+        TributaryDb::set_latest_substrate_block_to_cosign(self.txn, self.set, substrate_block_hash);
+
+        // TODO: If we aren't currently cosigning a block, start cosigning this one
       }
       Transaction::Cosigned { substrate_block_hash } => {
         // Start cosigning the latest intended-to-be-cosigned block
-        todo!("TODO")
+        let Some(latest_substrate_block_to_cosign) =
+          TributaryDb::latest_substrate_block_to_cosign(self.txn, self.set)
+        else {
+          return;
+        };
+        // If this is the block we just cosigned, return
+        if latest_substrate_block_to_cosign == substrate_block_hash {
+          return;
+        }
+        let substrate_block_number = todo!("TODO");
+        // Whitelist the topic
+        TributaryDb::recognize_topic(
+          self.txn,
+          self.set,
+          Topic::Sign {
+            id: VariantSignId::Cosign(substrate_block_number),
+            attempt: 0,
+            round: SigningProtocolRound::Preprocess,
+          },
+        );
+        // Send the message for the processor to start signing
+        TributaryDb::send_message(
+          self.txn,
+          self.set,
+          messages::coordinator::CoordinatorMessage::CosignSubstrateBlock {
+            session: self.set.session,
+            block_number: substrate_block_number,
+            block: substrate_block_hash,
+          },
+        );
       }
       Transaction::SubstrateBlock { hash } => {
         // Whitelist all of the IDs this Substrate block causes to be signed
@@ -95,11 +151,148 @@ impl<'a, D: DbTxn, TD: Db> ScanBlock<'a, D, TD> {
       }
 
       Transaction::SlashReport { slash_points, signed } => {
+        let signer = signer(signed);
+
+        if slash_points.len() != self.validators.len() {
+          TributaryDb::fatal_slash(
+            self.txn,
+            self.set,
+            signer,
+            "slash report was for a distinct amount of signers",
+          );
+          return;
+        }
+
         // Accumulate, and if past the threshold, calculate *the* slash report and start signing it
-        todo!("TODO")
+        match TributaryDb::accumulate(
+          self.txn,
+          self.set,
+          self.validators,
+          self.total_weight,
+          block_number,
+          Topic::SlashReport,
+          signer,
+          self.validator_weights[&signer],
+          &slash_points,
+        ) {
+          DataSet::None => {}
+          DataSet::Participating(data_set) => {
+            // Find the median reported slashes for this validator
+            // TODO: This lets 34% perform a fatal slash. Should that be allowed?
+            let mut median_slash_report = Vec::with_capacity(self.validators.len());
+            for i in 0 .. self.validators.len() {
+              let mut this_validator =
+                data_set.values().map(|report| report[i]).collect::<Vec<_>>();
+              this_validator.sort_unstable();
+              // Choose the median, where if there are two median values, the lower one is chosen
+              let median_index = if (this_validator.len() % 2) == 1 {
+                this_validator.len() / 2
+              } else {
+                (this_validator.len() / 2) - 1
+              };
+              median_slash_report.push(this_validator[median_index]);
+            }
+
+            // We only publish slashes for the `f` worst performers to:
+            // 1) Effect amnesty if there were network disruptions which affected everyone
+            // 2) Ensure the signing threshold doesn't have a disincentive to do their job
+
+            // Find the worst performer within the signing threshold's slash points
+            let f = (self.validators.len() - 1) / 3;
+            let worst_validator_in_supermajority_slash_points = {
+              let mut sorted_slash_points = median_slash_report.clone();
+              sorted_slash_points.sort_unstable();
+              // This won't be a valid index if `f == 0`, which means we don't have any validators
+              // to slash
+              let index_of_first_validator_to_slash = self.validators.len() - f;
+              let index_of_worst_validator_in_supermajority = index_of_first_validator_to_slash - 1;
+              sorted_slash_points[index_of_worst_validator_in_supermajority]
+            };
+
+            // Perform the amortization
+            for slash_points in &mut median_slash_report {
+              *slash_points =
+                slash_points.saturating_sub(worst_validator_in_supermajority_slash_points)
+            }
+            let amortized_slash_report = median_slash_report;
+
+            // Create the resulting slash report
+            let mut slash_report = vec![];
+            for (validator, points) in self.validators.iter().copied().zip(amortized_slash_report) {
+              if points != 0 {
+                slash_report.push(Slash { key: validator.into(), points });
+              }
+            }
+            assert!(slash_report.len() <= f);
+
+            // Recognize the topic for signing the slash report
+            TributaryDb::recognize_topic(
+              self.txn,
+              self.set,
+              Topic::Sign {
+                id: VariantSignId::SlashReport,
+                attempt: 0,
+                round: SigningProtocolRound::Preprocess,
+              },
+            );
+            // Send the message for the processor to start signing
+            TributaryDb::send_message(
+              self.txn,
+              self.set,
+              messages::coordinator::CoordinatorMessage::SignSlashReport {
+                session: self.set.session,
+                report: slash_report,
+              },
+            );
+          }
+        };
       }
 
-      Transaction::Sign { id, attempt, label, data, signed } => todo!("TODO"),
+      Transaction::Sign { id, attempt, round, data, signed } => {
+        let topic = Topic::Sign { id, attempt, round };
+        let signer = signer(signed);
+
+        if u64::try_from(data.len()).unwrap() != self.validator_weights[&signer] {
+          TributaryDb::fatal_slash(
+            self.txn,
+            self.set,
+            signer,
+            "signer signed with a distinct amount of key shares than they had key shares",
+          );
+          return;
+        }
+
+        match TributaryDb::accumulate(
+          self.txn,
+          self.set,
+          self.validators,
+          self.total_weight,
+          block_number,
+          topic,
+          signer,
+          self.validator_weights[&signer],
+          &data,
+        ) {
+          DataSet::None => {}
+          DataSet::Participating(data_set) => {
+            let id = topic.sign_id(self.set).expect("Topic::Sign didn't have SignId");
+            let flatten_data_set = |data_set| todo!("TODO");
+            let data_set = flatten_data_set(data_set);
+            TributaryDb::send_message(
+              self.txn,
+              self.set,
+              match round {
+                SigningProtocolRound::Preprocess => {
+                  messages::sign::CoordinatorMessage::Preprocesses { id, preprocesses: data_set }
+                }
+                SigningProtocolRound::Share => {
+                  messages::sign::CoordinatorMessage::Shares { id, shares: data_set }
+                }
+              },
+            )
+          }
+        };
+      }
     }
   }
 

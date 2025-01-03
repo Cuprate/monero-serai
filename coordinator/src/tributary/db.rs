@@ -5,7 +5,7 @@ use borsh::{BorshSerialize, BorshDeserialize};
 
 use serai_client::{primitives::SeraiAddress, validator_sets::primitives::ValidatorSet};
 
-use processor_messages::sign::VariantSignId;
+use messages::sign::{VariantSignId, SignId};
 
 use serai_db::*;
 
@@ -13,20 +13,20 @@ use crate::tributary::transaction::SigningProtocolRound;
 
 /// A topic within the database which the group participates in
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Encode, BorshSerialize, BorshDeserialize)]
-pub enum Topic {
+pub(crate) enum Topic {
   /// Vote to remove a participant
   RemoveParticipant { participant: SeraiAddress },
 
   // DkgParticipation isn't represented here as participations are immediately sent to the
   // processor, not accumulated within this databse
   /// Participation in the signing protocol to confirm the DKG results on Substrate
-  DkgConfirmation { attempt: u32, label: SigningProtocolRound },
+  DkgConfirmation { attempt: u32, round: SigningProtocolRound },
 
   /// The local view of the SlashReport, to be aggregated into the final SlashReport
   SlashReport,
 
   /// Participation in a signing protocol
-  Sign { id: VariantSignId, attempt: u32, label: SigningProtocolRound },
+  Sign { id: VariantSignId, attempt: u32, round: SigningProtocolRound },
 }
 
 enum Participating {
@@ -40,13 +40,13 @@ impl Topic {
     #[allow(clippy::match_same_arms)]
     match self {
       Topic::RemoveParticipant { .. } => None,
-      Topic::DkgConfirmation { attempt, label: _ } => Some(Topic::DkgConfirmation {
+      Topic::DkgConfirmation { attempt, round: _ } => Some(Topic::DkgConfirmation {
         attempt: attempt + 1,
-        label: SigningProtocolRound::Preprocess,
+        round: SigningProtocolRound::Preprocess,
       }),
       Topic::SlashReport { .. } => None,
-      Topic::Sign { id, attempt, label: _ } => {
-        Some(Topic::Sign { id, attempt: attempt + 1, label: SigningProtocolRound::Preprocess })
+      Topic::Sign { id, attempt, round: _ } => {
+        Some(Topic::Sign { id, attempt: attempt + 1, round: SigningProtocolRound::Preprocess })
       }
     }
   }
@@ -56,24 +56,37 @@ impl Topic {
     #[allow(clippy::match_same_arms)]
     match self {
       Topic::RemoveParticipant { .. } => None,
-      Topic::DkgConfirmation { attempt, label } => match label {
+      Topic::DkgConfirmation { attempt, round } => match round {
         SigningProtocolRound::Preprocess => {
           let attempt = attempt + 1;
           Some((
             attempt,
-            Topic::DkgConfirmation { attempt, label: SigningProtocolRound::Preprocess },
+            Topic::DkgConfirmation { attempt, round: SigningProtocolRound::Preprocess },
           ))
         }
         SigningProtocolRound::Share => None,
       },
       Topic::SlashReport { .. } => None,
-      Topic::Sign { id, attempt, label } => match label {
+      Topic::Sign { id, attempt, round } => match round {
         SigningProtocolRound::Preprocess => {
           let attempt = attempt + 1;
-          Some((attempt, Topic::Sign { id, attempt, label: SigningProtocolRound::Preprocess }))
+          Some((attempt, Topic::Sign { id, attempt, round: SigningProtocolRound::Preprocess }))
         }
         SigningProtocolRound::Share => None,
       },
+    }
+  }
+
+  // The SignId for this topic
+  //
+  // Returns None if Topic isn't Topic::Sign
+  pub(crate) fn sign_id(self, set: ValidatorSet) -> Option<messages::sign::SignId> {
+    #[allow(clippy::match_same_arms)]
+    match self {
+      Topic::RemoveParticipant { .. } => None,
+      Topic::DkgConfirmation { .. } => None,
+      Topic::SlashReport { .. } => None,
+      Topic::Sign { id, attempt, round: _ } => Some(SignId { session: set.session, id, attempt }),
     }
   }
 
@@ -84,17 +97,17 @@ impl Topic {
     #[allow(clippy::match_same_arms)]
     match self {
       Topic::RemoveParticipant { .. } => None,
-      Topic::DkgConfirmation { attempt, label } => match label {
+      Topic::DkgConfirmation { attempt, round } => match round {
         SigningProtocolRound::Preprocess => None,
         SigningProtocolRound::Share => {
-          Some(Topic::DkgConfirmation { attempt, label: SigningProtocolRound::Preprocess })
+          Some(Topic::DkgConfirmation { attempt, round: SigningProtocolRound::Preprocess })
         }
       },
       Topic::SlashReport { .. } => None,
-      Topic::Sign { id, attempt, label } => match label {
+      Topic::Sign { id, attempt, round } => match round {
         SigningProtocolRound::Preprocess => None,
         SigningProtocolRound::Share => {
-          Some(Topic::Sign { id, attempt, label: SigningProtocolRound::Preprocess })
+          Some(Topic::Sign { id, attempt, round: SigningProtocolRound::Preprocess })
         }
       },
     }
@@ -107,16 +120,16 @@ impl Topic {
     #[allow(clippy::match_same_arms)]
     match self {
       Topic::RemoveParticipant { .. } => None,
-      Topic::DkgConfirmation { attempt, label } => match label {
+      Topic::DkgConfirmation { attempt, round } => match round {
         SigningProtocolRound::Preprocess => {
-          Some(Topic::DkgConfirmation { attempt, label: SigningProtocolRound::Share })
+          Some(Topic::DkgConfirmation { attempt, round: SigningProtocolRound::Share })
         }
         SigningProtocolRound::Share => None,
       },
       Topic::SlashReport { .. } => None,
-      Topic::Sign { id, attempt, label } => match label {
+      Topic::Sign { id, attempt, round } => match round {
         SigningProtocolRound::Preprocess => {
-          Some(Topic::Sign { id, attempt, label: SigningProtocolRound::Share })
+          Some(Topic::Sign { id, attempt, round: SigningProtocolRound::Share })
         }
         SigningProtocolRound::Share => None,
       },
@@ -155,7 +168,7 @@ impl Topic {
 }
 
 /// The resulting data set from an accumulation
-pub enum DataSet<D: Borshy> {
+pub(crate) enum DataSet<D: Borshy> {
   /// Accumulating this did not produce a data set to act on
   /// (non-existent, not ready, prior handled, not participating, etc.)
   None,
@@ -187,15 +200,21 @@ create_db!(
   }
 );
 
-pub struct TributaryDb;
+db_channel!(
+  CoordinatorTributary {
+    ProcessorMessages: (set: ValidatorSet) -> messages::CoordinatorMessage,
+  }
+);
+
+pub(crate) struct TributaryDb;
 impl TributaryDb {
-  pub fn last_handled_tributary_block(
+  pub(crate) fn last_handled_tributary_block(
     getter: &impl Get,
     set: ValidatorSet,
   ) -> Option<(u64, [u8; 32])> {
     LastHandledTributaryBlock::get(getter, set)
   }
-  pub fn set_last_handled_tributary_block(
+  pub(crate) fn set_last_handled_tributary_block(
     txn: &mut impl DbTxn,
     set: ValidatorSet,
     block_number: u64,
@@ -204,18 +223,35 @@ impl TributaryDb {
     LastHandledTributaryBlock::set(txn, set, &(block_number, block_hash));
   }
 
-  pub fn recognize_topic(txn: &mut impl DbTxn, set: ValidatorSet, topic: Topic) {
+  pub(crate) fn latest_substrate_block_to_cosign(
+    getter: &impl Get,
+    set: ValidatorSet,
+  ) -> Option<[u8; 32]> {
+    LatestSubstrateBlockToCosign::get(getter, set)
+  }
+  pub(crate) fn set_latest_substrate_block_to_cosign(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+    substrate_block_hash: [u8; 32],
+  ) {
+    LatestSubstrateBlockToCosign::set(txn, set, &substrate_block_hash);
+  }
+
+  pub(crate) fn recognize_topic(txn: &mut impl DbTxn, set: ValidatorSet, topic: Topic) {
     AccumulatedWeight::set(txn, set, topic, &0);
   }
 
-  pub fn start_of_block(txn: &mut impl DbTxn, set: ValidatorSet, block_number: u64) {
+  pub(crate) fn start_of_block(txn: &mut impl DbTxn, set: ValidatorSet, block_number: u64) {
     for topic in Reattempt::take(txn, set, block_number).unwrap_or(vec![]) {
       // TODO: Slash all people who preprocessed but didn't share
       Self::recognize_topic(txn, set, topic);
+      if let Some(id) = topic.sign_id(set) {
+        Self::send_message(txn, set, messages::sign::CoordinatorMessage::Reattempt { id });
+      }
     }
   }
 
-  pub fn fatal_slash(
+  pub(crate) fn fatal_slash(
     txn: &mut impl DbTxn,
     set: ValidatorSet,
     validator: SeraiAddress,
@@ -225,12 +261,16 @@ impl TributaryDb {
     SlashPoints::set(txn, set, validator, &u64::MAX);
   }
 
-  pub fn is_fatally_slashed(getter: &impl Get, set: ValidatorSet, validator: SeraiAddress) -> bool {
+  pub(crate) fn is_fatally_slashed(
+    getter: &impl Get,
+    set: ValidatorSet,
+    validator: SeraiAddress,
+  ) -> bool {
     SlashPoints::get(getter, set, validator).unwrap_or(0) == u64::MAX
   }
 
   #[allow(clippy::too_many_arguments)]
-  pub fn accumulate<D: Borshy>(
+  pub(crate) fn accumulate<D: Borshy>(
     txn: &mut impl DbTxn,
     set: ValidatorSet,
     validators: &[SeraiAddress],
@@ -286,7 +326,8 @@ impl TributaryDb {
     // Check if we now cross the weight threshold
     if accumulated_weight >= topic.required_participation(total_weight) {
       // Queue this for re-attempt after enough time passes
-      if let Some((attempt, reattempt_topic)) = topic.reattempt_topic() {
+      let reattempt_topic = topic.reattempt_topic();
+      if let Some((attempt, reattempt_topic)) = reattempt_topic {
         // 5 minutes
         #[cfg(not(feature = "longer-reattempts"))]
         const BASE_REATTEMPT_DELAY: u32 =
@@ -316,14 +357,10 @@ impl TributaryDb {
       let mut data_set = HashMap::with_capacity(validators.len());
       for validator in validators {
         if let Some(data) = Accumulated::<D>::get(txn, set, topic, *validator) {
-          // Clean this data up if there's not a succeeding topic
-          // If there is, we wait as the succeeding topic checks our participation in this topic
-          if succeeding_topic.is_none() {
+          // Clean this data up if there's not a re-attempt topic
+          // If there is a re-attempt topic, we clean it up upon re-attempt
+          if reattempt_topic.is_none() {
             Accumulated::<D>::del(txn, set, topic, *validator);
-          }
-          // If this *was* the succeeding topic, clean up the preceding topic's data
-          if let Some(preceding_topic) = preceding_topic {
-            Accumulated::<D>::del(txn, set, preceding_topic, *validator);
           }
           data_set.insert(*validator, data);
         }
@@ -342,5 +379,13 @@ impl TributaryDb {
     } else {
       DataSet::None
     }
+  }
+
+  pub(crate) fn send_message(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+    message: impl Into<messages::CoordinatorMessage>,
+  ) {
+    ProcessorMessages::send(txn, set, &message.into());
   }
 }
