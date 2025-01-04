@@ -161,6 +161,11 @@ async fn keys_for_network(
   serai: &TemporalSerai<'_>,
   network: NetworkId,
 ) -> Result<Option<(Session, KeyPair)>, String> {
+  // The Serai network never cosigns so it has no keys for cosigning
+  if network == NetworkId::Serai {
+    return Ok(None);
+  }
+
   let Some(latest_session) =
     serai.validator_sets().session(network).await.map_err(|e| format!("{e:?}"))?
   else {
