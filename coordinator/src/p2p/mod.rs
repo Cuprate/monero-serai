@@ -101,8 +101,8 @@ impl SwarmTask {
 
         // Refresh the instance of validators we use to track peers/share with authenticate
         () = tokio::time::sleep(time_till_refresh_validators) => {
-          const TIME_BETWEEN_REFRESH_VALIDATORS: Duration = Duration::from_secs(5);
-          const MAX_TIME_BETWEEN_REFRESH_VALIDATORS: Duration = Duration::from_secs(120);
+          const TIME_BETWEEN_REFRESH_VALIDATORS: Duration = Duration::from_secs(60);
+          const MAX_TIME_BETWEEN_REFRESH_VALIDATORS: Duration = Duration::from_secs(5 * 60);
 
           let update = self.validators.write().await.update().await;
           match update {

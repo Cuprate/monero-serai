@@ -26,8 +26,9 @@ struct DialTask {
 }
 
 impl ContinuallyRan for DialTask {
-  // Only run every thirty seconds, not the default of every five
-  const DELAY_BETWEEN_ITERATIONS: u64 = 30;
+  // Only run every five minutes, not the default of every five seconds
+  const DELAY_BETWEEN_ITERATIONS: u64 = 5 * 60;
+  const MAX_DELAY_BETWEEN_ITERATIONS: u64 = 10 * 60;
 
   fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
     async move {
