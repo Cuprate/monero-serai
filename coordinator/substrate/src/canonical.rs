@@ -107,6 +107,9 @@ impl<D: Db> ContinuallyRan for CanonicalEventStream<D> {
 
       // Sync the next set of upcoming blocks all at once to minimize latency
       const BLOCKS_TO_SYNC_AT_ONCE: u64 = 10;
+      // FuturesOrdered can be bad practice due to potentially causing tiemouts if it isn't
+      // sufficiently polled. Considering our processing loop is minimal and it does poll this,
+      // it's fine.
       let mut set = FuturesOrdered::new();
       for block_number in
         next_block ..= latest_finalized_block.min(next_block + BLOCKS_TO_SYNC_AT_ONCE)

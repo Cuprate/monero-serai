@@ -100,6 +100,11 @@ impl<D: Db> ContinuallyRan for EphemeralEventStream<D> {
 
       // Sync the next set of upcoming blocks all at once to minimize latency
       const BLOCKS_TO_SYNC_AT_ONCE: u64 = 50;
+      // FuturesOrdered can be bad practice due to potentially causing tiemouts if it isn't
+      // sufficiently polled. Our processing loop isn't minimal, itself making multiple requests,
+      // but the loop body should only be executed a few times a week. It's better to get through
+      // most blocks with this optimization, and have timeouts a few times a week, than not have
+      // this at all.
       let mut set = FuturesOrdered::new();
       for block_number in
         next_block ..= latest_finalized_block.min(next_block + BLOCKS_TO_SYNC_AT_ONCE)
