@@ -25,6 +25,7 @@ bitvec = { version = "1", default-features = false, features = ["std"] }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
 
 blake2 = { version = "0.10", default-features = false, features = ["std"] }
+schnorrkel = { version = "0.11", default-features = false, features = ["std"] }
 
 transcript = { package = "flexible-transcript", path = "../crypto/transcript", default-features = false, features = ["std", "recommended"] }
 ciphersuite = { path = "../crypto/ciphersuite", default-features = false, features = ["std"] }

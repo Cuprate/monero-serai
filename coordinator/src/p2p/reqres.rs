@@ -1,5 +1,5 @@
 use core::{fmt, time::Duration};
-use std::io::{self, Read};
+use std::io;
 
 use async_trait::async_trait;
 

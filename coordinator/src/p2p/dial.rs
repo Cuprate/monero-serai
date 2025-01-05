@@ -1,4 +1,5 @@
 use core::future::Future;
+use std::collections::HashSet;
 
 use rand_core::{RngCore, OsRng};
 
@@ -25,6 +26,7 @@ struct DialTask {
 }
 
 impl ContinuallyRan for DialTask {
+  // Only run every thirty seconds, not the default of every five
   const DELAY_BETWEEN_ITERATIONS: u64 = 30;
 
   fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
@@ -37,7 +39,7 @@ impl ContinuallyRan for DialTask {
         .peers
         .peers
         .read()
-        .unwrap()
+        .await
         .iter()
         .map(|(network, peers)| (*network, peers.len()))
         .collect::<Vec<_>>();
@@ -54,9 +56,9 @@ impl ContinuallyRan for DialTask {
           (peer_count <
             self
               .validators
-              .validators()
+              .by_network()
               .get(&network)
-              .map(Vec::len)
+              .map(HashSet::len)
               .unwrap_or(0)
               .saturating_sub(1))
         {
