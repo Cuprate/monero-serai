@@ -17,7 +17,7 @@ use libp2p::{
 
 /// A struct to sync the validators from the Serai node in order to keep track of them.
 mod validators;
-use validators::Validators;
+use validators::{Validators, update_shared_validators};
 
 /// The authentication protocol upgrade to limit the P2P network to active validators.
 mod authenticate;
@@ -104,7 +104,7 @@ impl SwarmTask {
           const TIME_BETWEEN_REFRESH_VALIDATORS: Duration = Duration::from_secs(60);
           const MAX_TIME_BETWEEN_REFRESH_VALIDATORS: Duration = Duration::from_secs(5 * 60);
 
-          let update = self.validators.write().await.update().await;
+          let update = update_shared_validators(&self.validators).await;
           match update {
             Ok(removed) => {
               for removed in removed {
