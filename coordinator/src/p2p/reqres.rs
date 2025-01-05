@@ -1,4 +1,4 @@
-use core::time::Duration;
+use core::{fmt, time::Duration};
 use std::io::{self, Read};
 
 use async_trait::async_trait;
@@ -46,6 +46,15 @@ pub(crate) enum Response {
   Blocks(Vec<TributaryBlockWithCommit>),
   NotableCosigns(Vec<SignedCosign>),
 }
+impl fmt::Debug for Response {
+  fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    (match self {
+      Response::Blocks(_) => fmt.debug_struct("Response::Block"),
+      Response::NotableCosigns(_) => fmt.debug_struct("Response::NotableCosigns"),
+    })
+    .finish_non_exhaustive()
+  }
+}
 
 /// The codec used for the request-response protocol.
 ///
@@ -53,7 +62,7 @@ pub(crate) enum Response {
 /// ideally, we'd use borsh directly with the `io` traits defined here, they're async and there
 /// isn't an amenable API within borsh for incremental deserialization.
 #[derive(Default, Clone, Copy, Debug)]
-struct Codec;
+pub(crate) struct Codec;
 impl Codec {
   async fn read<M: BorshDeserialize>(io: &mut (impl Unpin + AsyncRead)) -> io::Result<M> {
     let mut len = [0; 4];

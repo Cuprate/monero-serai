@@ -1,5 +1,5 @@
 use core::{pin::Pin, future::Future};
-use std::io;
+use std::{sync::Arc, io};
 
 use zeroize::Zeroizing;
 use rand_core::{RngCore, OsRng};
@@ -7,14 +7,19 @@ use rand_core::{RngCore, OsRng};
 use blake2::{Digest, Blake2s256};
 use schnorrkel::{Keypair, PublicKey, Signature};
 
-use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, StreamExt};
-use libp2p::{
-  core::UpgradeInfo, InboundUpgrade, OutboundUpgrade, multihash::Multihash, identity::PeerId, noise,
-};
+use serai_client::primitives::PublicKey as Public;
+
+use tokio::sync::RwLock;
+
+use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use libp2p::{core::UpgradeInfo, InboundUpgrade, OutboundUpgrade, identity::PeerId, noise};
+
+use crate::p2p::{validators::Validators, peer_id_from_public};
 
 const PROTOCOL: &str = "/serai/coordinator/validators";
 
 struct OnlyValidators {
+  validators: Arc<RwLock<Validators>>,
   serai_key: Zeroizing<Keypair>,
   our_peer_id: PeerId,
 }
@@ -97,9 +102,12 @@ impl OnlyValidators {
       .verify_simple(PROTOCOL.as_bytes(), &msg, &sig)
       .map_err(|_| io::Error::other("invalid signature"))?;
 
-    // 0 represents the identity Multihash, that no hash was performed
-    // It's an internal constant so we can't refer to the constant inside libp2p
-    Ok(PeerId::from_multihash(Multihash::wrap(0, &public_key.to_bytes()).unwrap()).unwrap())
+    let peer_id = peer_id_from_public(Public::from_raw(public_key.to_bytes()));
+    if !self.validators.read().await.contains(&peer_id) {
+      Err(io::Error::other("peer which tried to connect isn't a known active validator"))?;
+    }
+
+    Ok(peer_id)
   }
 }
 

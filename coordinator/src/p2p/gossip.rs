@@ -59,12 +59,11 @@ pub(crate) fn new_behavior() -> Behavior {
     })
     .build();
 
-  // TODO: Don't use IdentityTransform here. Authenticate using validator keys
-  let mut gossipsub = Behavior::new(MessageAuthenticity::Anonymous, config.unwrap()).unwrap();
+  let mut gossip = Behavior::new(MessageAuthenticity::Anonymous, config.unwrap()).unwrap();
 
   // Subscribe to the base topic
   let topic = IdentTopic::new(BASE_TOPIC);
-  let _ = gossipsub.subscribe(&topic);
+  let _ = gossip.subscribe(&topic);
 
-  gossipsub
+  gossip
 }
