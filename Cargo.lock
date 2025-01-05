@@ -8327,6 +8327,7 @@ dependencies = [
  "parity-scale-codec",
  "rand_core",
  "schnorr-signatures",
+ "schnorrkel",
  "serai-client",
  "serai-cosign",
  "serai-db",

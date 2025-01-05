@@ -100,6 +100,7 @@ impl SwarmTask {
         biased;
 
         // Refresh the instance of validators we use to track peers/share with authenticate
+        // TODO: Move this to a task
         () = tokio::time::sleep(time_till_refresh_validators) => {
           const TIME_BETWEEN_REFRESH_VALIDATORS: Duration = Duration::from_secs(60);
           const MAX_TIME_BETWEEN_REFRESH_VALIDATORS: Duration = Duration::from_secs(5 * 60);

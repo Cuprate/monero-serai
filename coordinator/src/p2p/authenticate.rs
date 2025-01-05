@@ -12,7 +12,12 @@ use serai_client::primitives::PublicKey as Public;
 use tokio::sync::RwLock;
 
 use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use libp2p::{core::UpgradeInfo, InboundUpgrade, OutboundUpgrade, identity::PeerId, noise};
+use libp2p::{
+  core::UpgradeInfo,
+  InboundUpgrade, OutboundUpgrade,
+  identity::{self, PeerId},
+  noise,
+};
 
 use crate::p2p::{validators::Validators, peer_id_from_public};
 
@@ -21,7 +26,7 @@ const PROTOCOL: &str = "/serai/coordinator/validators";
 struct OnlyValidators {
   validators: Arc<RwLock<Validators>>,
   serai_key: Zeroizing<Keypair>,
-  our_peer_id: PeerId,
+  noise_keypair: identity::Keypair,
 }
 
 impl OnlyValidators {
@@ -112,33 +117,35 @@ impl OnlyValidators {
 }
 
 impl UpgradeInfo for OnlyValidators {
-  type Info = &'static str;
-  type InfoIter = [&'static str; 1];
-  fn protocol_info(&self) -> [&'static str; 1] {
-    [PROTOCOL]
+  type Info = <noise::Config as UpgradeInfo>::Info;
+  type InfoIter = <noise::Config as UpgradeInfo>::InfoIter;
+  fn protocol_info(&self) -> Self::InfoIter {
+    // A keypair only causes an error if its sign operation fails, which is only possible with RSA,
+    // which isn't used within this codebase
+    noise::Config::new(&self.noise_keypair).unwrap().protocol_info()
   }
 }
 
-impl<S: 'static + Send + Unpin + AsyncRead + AsyncWrite> InboundUpgrade<(PeerId, noise::Output<S>)>
-  for OnlyValidators
-{
+impl<S: 'static + Send + Unpin + AsyncRead + AsyncWrite> InboundUpgrade<S> for OnlyValidators {
   type Output = (PeerId, noise::Output<S>);
   type Error = io::Error;
   type Future = Pin<Box<dyn Send + Future<Output = Result<Self::Output, Self::Error>>>>;
 
-  fn upgrade_inbound(
-    self,
-    (dialer_noise_peer_id, mut socket): (PeerId, noise::Output<S>),
-    _: Self::Info,
-  ) -> Self::Future {
+  fn upgrade_inbound(self, socket: S, info: Self::Info) -> Self::Future {
     Box::pin(async move {
+      let (dialer_noise_peer_id, mut socket) = noise::Config::new(&self.noise_keypair)
+        .unwrap()
+        .upgrade_inbound(socket, info)
+        .await
+        .map_err(io::Error::other)?;
+
       let (our_challenge, dialer_challenge) = OnlyValidators::challenges(&mut socket).await?;
       let dialer_serai_validator = self
         .authenticate(
           &mut socket,
           dialer_noise_peer_id,
           dialer_challenge,
-          self.our_peer_id,
+          PeerId::from_public_key(&self.noise_keypair.public()),
           our_challenge,
         )
         .await?;
@@ -147,24 +154,24 @@ impl<S: 'static + Send + Unpin + AsyncRead + AsyncWrite> InboundUpgrade<(PeerId,
   }
 }
 
-impl<S: 'static + Send + Unpin + AsyncRead + AsyncWrite> OutboundUpgrade<(PeerId, noise::Output<S>)>
-  for OnlyValidators
-{
+impl<S: 'static + Send + Unpin + AsyncRead + AsyncWrite> OutboundUpgrade<S> for OnlyValidators {
   type Output = (PeerId, noise::Output<S>);
   type Error = io::Error;
   type Future = Pin<Box<dyn Send + Future<Output = Result<Self::Output, Self::Error>>>>;
 
-  fn upgrade_outbound(
-    self,
-    (listener_noise_peer_id, mut socket): (PeerId, noise::Output<S>),
-    _: Self::Info,
-  ) -> Self::Future {
+  fn upgrade_outbound(self, socket: S, info: Self::Info) -> Self::Future {
     Box::pin(async move {
+      let (listener_noise_peer_id, mut socket) = noise::Config::new(&self.noise_keypair)
+        .unwrap()
+        .upgrade_outbound(socket, info)
+        .await
+        .map_err(io::Error::other)?;
+
       let (our_challenge, listener_challenge) = OnlyValidators::challenges(&mut socket).await?;
       let listener_serai_validator = self
         .authenticate(
           &mut socket,
-          self.our_peer_id,
+          PeerId::from_public_key(&self.noise_keypair.public()),
           our_challenge,
           listener_noise_peer_id,
           listener_challenge,
