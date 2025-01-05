@@ -10,6 +10,7 @@ use libp2p::gossipsub::{
   IdentTopic, MessageId, MessageAuthenticity, ValidationMode, ConfigBuilder, IdentityTransform,
   AllowAllSubscriptionFilter, Behaviour,
 };
+pub use libp2p::gossipsub::Event;
 
 use serai_cosign::SignedCosign;
 
@@ -27,7 +28,7 @@ fn topic_for_set(set: ValidatorSet) -> IdentTopic {
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub(crate) enum Message {
-  Tribuary { genesis: [u8; 32], message: Vec<u8> },
+  Tributary { set: ValidatorSet, message: Vec<u8> },
   Cosign(SignedCosign),
 }
 

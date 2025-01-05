@@ -285,10 +285,10 @@ impl<D: Db> Cosigning<D> {
   ///
   /// If this global session hasn't produced any notable cosigns, this will return the latest
   /// cosigns for this session.
-  pub fn notable_cosigns(&self, global_session: [u8; 32]) -> Vec<SignedCosign> {
+  pub fn notable_cosigns(getter: &impl Get, global_session: [u8; 32]) -> Vec<SignedCosign> {
     let mut cosigns = Vec::with_capacity(serai_client::primitives::NETWORKS.len());
     for network in serai_client::primitives::NETWORKS {
-      if let Some(cosign) = NetworksLatestCosignedBlock::get(&self.db, global_session, network) {
+      if let Some(cosign) = NetworksLatestCosignedBlock::get(getter, global_session, network) {
         cosigns.push(cosign);
       }
     }

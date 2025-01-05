@@ -4,9 +4,14 @@ use std::{
   time::{Duration, Instant},
 };
 
+use borsh::BorshDeserialize;
+
 use serai_client::primitives::{NetworkId, PublicKey};
 
 use tokio::sync::{mpsc, RwLock};
+
+use serai_db::Db;
+use serai_cosign::Cosigning;
 
 use futures_util::StreamExt;
 use libp2p::{
@@ -76,7 +81,7 @@ struct Behavior {
   gossip: gossip::Behavior,
 }
 
-struct SwarmTask {
+struct SwarmTask<D: Db> {
   to_dial: mpsc::UnboundedReceiver<DialOpts>,
 
   validators: Arc<RwLock<Validators>>,
@@ -86,10 +91,11 @@ struct SwarmTask {
   peers: Peers,
   rebuild_peers_at: Instant,
 
+  db: D,
   swarm: Swarm<Behavior>,
 }
 
-impl SwarmTask {
+impl<D: Db> SwarmTask<D> {
   async fn run(mut self) {
     loop {
       let time_till_refresh_validators =
@@ -160,8 +166,42 @@ impl SwarmTask {
           //   libp2p/0.54.1/libp2p/struct.Swarm.html#impl-Stream-for-Swarm%3CTBehaviour%3E
           let event = event.unwrap();
           match event {
-            SwarmEvent::Behaviour(BehaviorEvent::Reqres(event)) => todo!("TODO"),
-            SwarmEvent::Behaviour(BehaviorEvent::Gossip(event)) => todo!("TODO"),
+            SwarmEvent::Behaviour(BehaviorEvent::Reqres(event)) => match event {
+              reqres::Event::Message { message, .. } => match message {
+                reqres::Message::Request { request_id: _, request, channel } => {
+                  match request {
+                    // TODO: Send these
+                    reqres::Request::KeepAlive => {},
+                    reqres::Request::Heartbeat { set, latest_block_hash } => todo!("TODO"),
+                    reqres::Request::NotableCosigns { global_session } => {
+                      let cosigns = Cosigning::<D>::notable_cosigns(&self.db, global_session);
+                      let res = reqres::Response::NotableCosigns(cosigns);
+                      let _: Result<_, _> =
+                        self.swarm.behaviour_mut().reqres.send_response(channel, res);
+                    },
+                  }
+                }
+                reqres::Message::Response { request_id, response } => todo!("TODO"),
+              }
+              reqres::Event::OutboundFailure { request_id, .. } => todo!("TODO"),
+              reqres::Event::InboundFailure { .. } | reqres::Event::ResponseSent { .. } => {},
+            },
+            SwarmEvent::Behaviour(BehaviorEvent::Gossip(event)) => match event {
+              gossip::Event::Message { message, .. } =>  {
+                let Ok(message) = gossip::Message::deserialize(&mut message.data.as_slice()) else {
+                  continue
+                };
+                match message {
+                  gossip::Message::Tributary { set, message } => todo!("TODO"),
+                  gossip::Message::Cosign(signed_cosign) => todo!("TODO"),
+                }
+              }
+              gossip::Event::Subscribed { .. } | gossip::Event::Unsubscribed { .. } => {},
+              gossip::Event::GossipsubNotSupported { peer_id } => {
+                let _: Result<_, _> = self.swarm.disconnect_peer_id(peer_id);
+              }
+            },
+
             // New connection, so update peers
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
               let Some(networks) =
@@ -177,6 +217,7 @@ impl SwarmTask {
                   .insert(peer_id);
               }
             },
+
             // Connection closed, so update peers
             SwarmEvent::ConnectionClosed { peer_id, .. } => {
               let Some(networks) =
@@ -191,7 +232,10 @@ impl SwarmTask {
                   .or_insert_with(HashSet::new)
                   .remove(&peer_id);
               }
+              // TODO: dial_task.run_now() if haven't in past minute
             },
+
+            // We don't handle any of these
             SwarmEvent::IncomingConnection { .. } |
             SwarmEvent::IncomingConnectionError { .. } |
             SwarmEvent::OutgoingConnectionError { .. } |

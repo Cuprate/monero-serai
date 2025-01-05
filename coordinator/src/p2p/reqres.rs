@@ -8,7 +8,8 @@ use serai_client::validator_sets::primitives::ValidatorSet;
 
 use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use libp2p::request_response::{Codec as CodecTrait, Config, Behaviour, ProtocolSupport};
+use libp2p::request_response::{self, Codec as CodecTrait, Config, Behaviour, ProtocolSupport};
+pub use request_response::{Message, Event};
 
 use serai_cosign::SignedCosign;
 
