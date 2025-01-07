@@ -13,7 +13,7 @@ use serai_client::{
 
 use tokio::sync::{mpsc, RwLock};
 
-use serai_task::Task;
+use serai_task::{Task, ContinuallyRan};
 
 use libp2p::{
   multihash::Multihash,
@@ -26,7 +26,7 @@ use libp2p::{
 
 /// A struct to sync the validators from the Serai node in order to keep track of them.
 mod validators;
-use validators::{Validators, UpdateValidatorsTask};
+use validators::UpdateValidatorsTask;
 
 /// The authentication protocol upgrade to limit the P2P network to active validators.
 mod authenticate;
@@ -34,6 +34,7 @@ use authenticate::OnlyValidators;
 
 /// The dial task, to find new peers to connect to
 mod dial;
+use dial::DialTask;
 
 /// The request-response messages and behavior
 mod reqres;
@@ -105,7 +106,10 @@ pub(crate) fn new(serai_key: &Zeroizing<Keypair>, serai: Serai) -> P2p {
   // Define the dial task
   let (dial_task_def, dial_task) = Task::new();
   let (to_dial_send, to_dial_recv) = mpsc::unbounded_channel();
-  todo!("TODO: Dial task");
+  tokio::spawn(
+    DialTask::new(serai.clone(), peers.clone(), to_dial_send)
+      .continually_run(dial_task_def, vec![]),
+  );
 
   // Define the Validators object used for validating new connections
   let connection_validators = UpdateValidatorsTask::spawn(serai.clone());
@@ -166,5 +170,7 @@ pub(crate) fn new(serai_key: &Zeroizing<Keypair>, serai: Serai) -> P2p {
     inbound_request_responses_recv,
   );
 
-  todo!("TODO")
+  // gossip_send, signed_cosigns_recv, tributary_gossip_recv, outbound_requests_send,
+  // heartbeat_requests_recv, notable_cosign_requests_recv, inbound_request_responses_send
+  todo!("TODO");
 }

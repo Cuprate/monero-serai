@@ -27,6 +27,15 @@ pub(crate) struct Validators {
 }
 
 impl Validators {
+  pub(crate) fn new(serai: Serai) -> Self {
+    Validators {
+      serai,
+      sessions: HashMap::new(),
+      by_network: HashMap::new(),
+      validators: HashMap::new(),
+    }
+  }
+
   async fn session_changes(
     serai: impl Borrow<Serai>,
     sessions: impl Borrow<HashMap<NetworkId, Session>>,
@@ -138,12 +147,7 @@ impl UpdateValidatorsTask {
   /// This returns a reference to the Validators it updates after spawning itself.
   pub(crate) fn spawn(serai: Serai) -> Arc<RwLock<Validators>> {
     // The validators which will be updated
-    let validators = Arc::new(RwLock::new(Validators {
-      serai,
-      sessions: HashMap::new(),
-      by_network: HashMap::new(),
-      validators: HashMap::new(),
-    }));
+    let validators = Arc::new(RwLock::new(Validators::new(serai)));
 
     // Define the task
     let (update_validators_task, update_validators_task_handle) = Task::new();

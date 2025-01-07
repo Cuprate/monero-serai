@@ -28,11 +28,17 @@ const TARGET_PEERS_PER_NETWORK: usize = 5;
 */
 // TODO const TARGET_DIALED_PEERS_PER_NETWORK: usize = 3;
 
-struct DialTask {
+pub(crate) struct DialTask {
   serai: Serai,
   validators: Validators,
   peers: Peers,
   to_dial: mpsc::UnboundedSender<DialOpts>,
+}
+
+impl DialTask {
+  pub(crate) fn new(serai: Serai, peers: Peers, to_dial: mpsc::UnboundedSender<DialOpts>) -> Self {
+    DialTask { serai: serai.clone(), validators: Validators::new(serai), peers, to_dial }
+  }
 }
 
 impl ContinuallyRan for DialTask {
