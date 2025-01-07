@@ -7,8 +7,8 @@ use borsh::{BorshSerialize, BorshDeserialize};
 use serai_client::validator_sets::primitives::ValidatorSet;
 
 use libp2p::gossipsub::{
-  IdentTopic, MessageId, MessageAuthenticity, ValidationMode, ConfigBuilder, IdentityTransform,
-  AllowAllSubscriptionFilter, Behaviour,
+  TopicHash, IdentTopic, MessageId, MessageAuthenticity, ValidationMode, ConfigBuilder,
+  IdentityTransform, AllowAllSubscriptionFilter, Behaviour,
 };
 pub use libp2p::gossipsub::Event;
 
@@ -30,6 +30,15 @@ fn topic_for_set(set: ValidatorSet) -> IdentTopic {
 pub(crate) enum Message {
   Tributary { set: ValidatorSet, message: Vec<u8> },
   Cosign(SignedCosign),
+}
+
+impl Message {
+  pub(crate) fn topic(&self) -> TopicHash {
+    match self {
+      Message::Tributary { set, .. } => topic_for_set(*set).hash(),
+      Message::Cosign(_) => IdentTopic::new(BASE_TOPIC).hash(),
+    }
+  }
 }
 
 pub(crate) type Behavior = Behaviour<IdentityTransform, AllowAllSubscriptionFilter>;

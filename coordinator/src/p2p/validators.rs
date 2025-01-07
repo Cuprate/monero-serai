@@ -77,17 +77,16 @@ impl Validators {
   fn incorporate_session_changes(
     &mut self,
     session_changes: Vec<(NetworkId, Session, HashSet<PeerId>)>,
-  ) -> HashSet<PeerId> {
-    let mut removed = HashSet::new();
-
+  ) {
     for (network, session, validators) in session_changes {
       // Remove the existing validators
       for validator in self.by_network.remove(&network).unwrap_or_else(HashSet::new) {
+        // Get all networks this validator is in
         let mut networks = self.validators.remove(&validator).unwrap();
+        // Remove this one
         networks.remove(&network);
-        if networks.is_empty() {
-          removed.insert(validator);
-        } else {
+        // Insert the networks back if the validator was present in other networks
+        if !networks.is_empty() {
           self.validators.insert(validator, networks);
         }
       }
@@ -101,16 +100,15 @@ impl Validators {
       // Update the session we have populated
       self.sessions.insert(network, session);
     }
-
-    removed
   }
 
   /// Update the view of the validators.
   ///
   /// Returns all validators removed from the active validator set.
-  pub(crate) async fn update(&mut self) -> Result<HashSet<PeerId>, String> {
+  pub(crate) async fn update(&mut self) -> Result<(), String> {
     let session_changes = Self::session_changes(&self.serai, &self.sessions).await?;
-    Ok(self.incorporate_session_changes(session_changes))
+    self.incorporate_session_changes(session_changes);
+    Ok(())
   }
 
   pub(crate) fn by_network(&self) -> &HashMap<NetworkId, HashSet<PeerId>> {
@@ -134,10 +132,11 @@ impl Validators {
 /// Returns all validators removed from the active validator set.
 pub(crate) async fn update_shared_validators(
   validators: &Arc<RwLock<Validators>>,
-) -> Result<HashSet<PeerId>, String> {
+) -> Result<(), String> {
   let session_changes = {
     let validators = validators.read().await;
     Validators::session_changes(validators.serai.clone(), validators.sessions.clone()).await?
   };
-  Ok(validators.write().await.incorporate_session_changes(session_changes))
+  validators.write().await.incorporate_session_changes(session_changes);
+  Ok(())
 }

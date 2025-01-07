@@ -1,27 +1,16 @@
+use core::future::Future;
 use std::{
   sync::Arc,
   collections::{HashSet, HashMap},
-  time::{Duration, Instant},
 };
-
-use borsh::BorshDeserialize;
 
 use serai_client::primitives::{NetworkId, PublicKey};
 
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::RwLock;
 
-use serai_db::Db;
-use serai_task::TaskHandle;
+use serai_task::ContinuallyRan;
 
-use serai_cosign::Cosigning;
-
-use futures_util::StreamExt;
-use libp2p::{
-  multihash::Multihash,
-  identity::PeerId,
-  request_response::RequestId,
-  swarm::{dial_opts::DialOpts, NetworkBehaviour, SwarmEvent, Swarm},
-};
+use libp2p::{multihash::Multihash, identity::PeerId, swarm::NetworkBehaviour};
 
 /// A struct to sync the validators from the Serai node in order to keep track of them.
 mod validators;
@@ -42,6 +31,9 @@ mod gossip;
 
 /// The heartbeat task, effecting sync of Tributaries
 mod heartbeat;
+
+/// The swarm task, running it and dispatching to/from it
+mod swarm;
 
 const PORT: u16 = 30563; // 5132 ^ (('c' << 8) | 'o')
 
@@ -84,213 +76,19 @@ struct Behavior {
   gossip: gossip::Behavior,
 }
 
-struct SwarmTask<D: Db> {
-  dial_task: TaskHandle,
-  to_dial: mpsc::UnboundedReceiver<DialOpts>,
-  last_dial_task_run: Instant,
-
+struct UpdateSharedValidatorsTask {
   validators: Arc<RwLock<Validators>>,
-  last_refreshed_validators: Instant,
-  next_refresh_validators: Instant,
-
-  peers: Peers,
-  rebuild_peers_at: Instant,
-
-  db: D,
-  swarm: Swarm<Behavior>,
-
-  request_recv: mpsc::UnboundedReceiver<(PeerId, Request, oneshot::Sender<Option<Response>>)>,
-  request_resp: HashMap<RequestId, oneshot::Sender<Option<Response>>>,
 }
 
-impl<D: Db> SwarmTask<D> {
-  async fn run(mut self) {
-    loop {
-      let time_till_refresh_validators =
-        self.next_refresh_validators.saturating_duration_since(Instant::now());
-      let time_till_rebuild_peers = self.rebuild_peers_at.saturating_duration_since(Instant::now());
+impl ContinuallyRan for UpdateSharedValidatorsTask {
+  // Only run every minute, not the default of every five seconds
+  const DELAY_BETWEEN_ITERATIONS: u64 = 60;
+  const MAX_DELAY_BETWEEN_ITERATIONS: u64 = 5 * 60;
 
-      tokio::select! {
-        biased;
-
-        // Refresh the instance of validators we use to track peers/share with authenticate
-        // TODO: Move this to a task
-        () = tokio::time::sleep(time_till_refresh_validators) => {
-          const TIME_BETWEEN_REFRESH_VALIDATORS: Duration = Duration::from_secs(60);
-          const MAX_TIME_BETWEEN_REFRESH_VALIDATORS: Duration = Duration::from_secs(5 * 60);
-
-          let update = update_shared_validators(&self.validators).await;
-          match update {
-            Ok(removed) => {
-              for removed in removed {
-                let _: Result<_, _> = self.swarm.disconnect_peer_id(removed);
-              }
-              self.last_refreshed_validators = Instant::now();
-              self.next_refresh_validators = Instant::now() + TIME_BETWEEN_REFRESH_VALIDATORS;
-            }
-            Err(e) => {
-              log::warn!("couldn't refresh validators: {e:?}");
-              // Increase the delay before the next refresh by using the time since the last
-              // refresh. This will be 5 seconds, then 5 seconds, then 10 seconds, then 20...
-              let time_since_last = self
-                .next_refresh_validators
-                .saturating_duration_since(self.last_refreshed_validators);
-              // But limit the delay
-              self.next_refresh_validators =
-                Instant::now() + time_since_last.min(MAX_TIME_BETWEEN_REFRESH_VALIDATORS);
-            },
-          }
-        }
-
-        // Rebuild the peers every 10 minutes
-        //
-        // This handles edge cases such as when a validator changes the networks they're present
-        // in, race conditions, or any other edge cases/quirks which would otherwise risk spiraling
-        // out of control
-        () = tokio::time::sleep(time_till_rebuild_peers) => {
-          const TIME_BETWEEN_REBUILD_PEERS: Duration = Duration::from_secs(10 * 60);
-
-          let validators_by_network = self.validators.read().await.by_network().clone();
-          let connected = self.swarm.connected_peers().copied().collect::<HashSet<_>>();
-          let mut peers = HashMap::new();
-          for (network, validators) in validators_by_network {
-            peers.insert(network, validators.intersection(&connected).copied().collect());
-          }
-          *self.peers.peers.write().await = peers;
-
-          self.rebuild_peers_at = Instant::now() + TIME_BETWEEN_REBUILD_PEERS;
-        }
-
-        // Dial peers we're instructed to
-        dial_opts = self.to_dial.recv() => {
-          let dial_opts = dial_opts.expect("DialTask was closed?");
-          let _: Result<_, _> = self.swarm.dial(dial_opts);
-        }
-
-        request = self.request_recv.recv() => {
-          let (peer, request, response_channel) =
-            request.expect("channel for requests was closed?");
-          let request_id = self.swarm.behaviour_mut().reqres.send_request(&peer, request);
-          self.request_resp.insert(request_id, response_channel);
-        }
-
-        // Handle swarm events
-        event = self.swarm.next() => {
-          // `Swarm::next` will never return `Poll::Ready(None)`
-          // https://docs.rs/
-          //   libp2p/0.54.1/libp2p/struct.Swarm.html#impl-Stream-for-Swarm%3CTBehaviour%3E
-          let event = event.unwrap();
-          match event {
-            SwarmEvent::Behaviour(BehaviorEvent::Reqres(event)) => match event {
-              reqres::Event::Message { message, .. } => match message {
-                reqres::Message::Request { request_id: _, request, channel } => {
-                  match request {
-                    // TODO: Send these
-                    reqres::Request::KeepAlive => {},
-                    reqres::Request::Heartbeat { set, latest_block_hash } => todo!("TODO"),
-                    reqres::Request::NotableCosigns { global_session } => {
-                      // TODO: Move this out
-                      let cosigns = Cosigning::<D>::notable_cosigns(&self.db, global_session);
-                      let res = reqres::Response::NotableCosigns(cosigns);
-                      let _: Result<_, _> =
-                        self.swarm.behaviour_mut().reqres.send_response(channel, res);
-                    },
-                  }
-                }
-                reqres::Message::Response { request_id, response } => {
-                  // Send Some(response) as the response for the request
-                  if let Some(channel) = self.request_resp.remove(&request_id) {
-                    let _: Result<_, _> = channel.send(Some(response));
-                  }
-                },
-              }
-              reqres::Event::OutboundFailure { request_id, .. } => {
-                // Send None as the response for the request
-                if let Some(channel) = self.request_resp.remove(&request_id) {
-                  let _: Result<_, _> = channel.send(None);
-                }
-              },
-              reqres::Event::InboundFailure { .. } | reqres::Event::ResponseSent { .. } => {},
-            },
-            SwarmEvent::Behaviour(BehaviorEvent::Gossip(event)) => match event {
-              gossip::Event::Message { message, .. } =>  {
-                let Ok(message) = gossip::Message::deserialize(&mut message.data.as_slice()) else {
-                  continue
-                };
-                match message {
-                  gossip::Message::Tributary { set, message } => todo!("TODO"),
-                  gossip::Message::Cosign(signed_cosign) => todo!("TODO"),
-                }
-              }
-              gossip::Event::Subscribed { .. } | gossip::Event::Unsubscribed { .. } => {},
-              gossip::Event::GossipsubNotSupported { peer_id } => {
-                let _: Result<_, _> = self.swarm.disconnect_peer_id(peer_id);
-              }
-            },
-
-            // New connection, so update peers
-            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-              let Some(networks) =
-                self.validators.read().await.networks(&peer_id).cloned() else { continue };
-              for network in networks {
-                self
-                  .peers
-                  .peers
-                  .write()
-                  .await
-                  .entry(network)
-                  .or_insert_with(HashSet::new)
-                  .insert(peer_id);
-              }
-            },
-
-            // Connection closed, so update peers
-            SwarmEvent::ConnectionClosed { peer_id, .. } => {
-              let Some(networks) =
-                self.validators.read().await.networks(&peer_id).cloned() else { continue };
-              for network in networks {
-                self
-                  .peers
-                  .peers
-                  .write()
-                  .await
-                  .entry(network)
-                  .or_insert_with(HashSet::new)
-                  .remove(&peer_id);
-              }
-
-              /*
-                We want to re-run the dial task, since we lost a peer, in case we should find new
-                peers. This opens a DoS where a validator repeatedly opens/closes connections to
-                force iterations of the dial task. We prevent this by setting a minimum distance
-                since the last explicit iteration.
-
-                This is suboptimal. If we have several disconnects in immediate proximity, we'll
-                trigger the dial task upon the first (where we may still have enough peers we
-                shouldn't dial more) but not the last (where we may have so few peers left we
-                should dial more). This is accepted as the dial task will eventually run on its
-                natural timer.
-              */
-              const MINIMUM_TIME_SINCE_LAST_EXPLICIT_DIAL: Duration = Duration::from_secs(60);
-              let now = Instant::now();
-              if (self.last_dial_task_run + MINIMUM_TIME_SINCE_LAST_EXPLICIT_DIAL) < now {
-                self.dial_task.run_now();
-                self.last_dial_task_run = now;
-              }
-            },
-
-            // We don't handle any of these
-            SwarmEvent::IncomingConnection { .. } |
-            SwarmEvent::IncomingConnectionError { .. } |
-            SwarmEvent::OutgoingConnectionError { .. } |
-            SwarmEvent::NewListenAddr { .. } |
-            SwarmEvent::ExpiredListenAddr { .. } |
-            SwarmEvent::ListenerClosed { .. } |
-            SwarmEvent::ListenerError { .. } |
-            SwarmEvent::Dialing { .. } => {}
-          }
-        }
-      }
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+    async move {
+      update_shared_validators(&self.validators).await.map_err(|e| format!("{e:?}"))?;
+      Ok(true)
     }
   }
 }

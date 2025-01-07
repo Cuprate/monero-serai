@@ -8,8 +8,10 @@ use serai_client::validator_sets::primitives::ValidatorSet;
 
 use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use libp2p::request_response::{self, Codec as CodecTrait, Config, Behaviour, ProtocolSupport};
-pub use request_response::{Message, Event};
+use libp2p::request_response::{
+  self, Codec as CodecTrait, Event as GenericEvent, Config, Behaviour, ProtocolSupport,
+};
+pub use request_response::Message;
 
 use serai_cosign::SignedCosign;
 
@@ -127,6 +129,8 @@ impl CodecTrait for Codec {
     Self::write(io, &res).await
   }
 }
+
+pub(crate) type Event = GenericEvent<Request, Response>;
 
 pub(crate) type Behavior = Behaviour<Codec>;
 pub(crate) fn new_behavior() -> Behavior {
