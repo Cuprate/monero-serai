@@ -46,16 +46,19 @@ pub(crate) struct TributaryBlockWithCommit {
 /// Responses which can be received via the request-response protocol.
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub(crate) enum Response {
+  NoResponse,
   Blocks(Vec<TributaryBlockWithCommit>),
   NotableCosigns(Vec<SignedCosign>),
 }
 impl fmt::Debug for Response {
   fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-    (match self {
-      Response::Blocks(_) => fmt.debug_struct("Response::Block"),
-      Response::NotableCosigns(_) => fmt.debug_struct("Response::NotableCosigns"),
-    })
-    .finish_non_exhaustive()
+    match self {
+      Response::NoResponse => fmt.debug_struct("Response::NoResponse").finish(),
+      Response::Blocks(_) => fmt.debug_struct("Response::Block").finish_non_exhaustive(),
+      Response::NotableCosigns(_) => {
+        fmt.debug_struct("Response::NotableCosigns").finish_non_exhaustive()
+      }
+    }
   }
 }
 

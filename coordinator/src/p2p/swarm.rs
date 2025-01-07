@@ -6,17 +6,18 @@ use std::{
 
 use borsh::BorshDeserialize;
 
+use serai_client::validator_sets::primitives::ValidatorSet;
+
 use tokio::sync::{mpsc, oneshot, RwLock};
 
-use serai_db::Db;
 use serai_task::TaskHandle;
 
-use serai_cosign::Cosigning;
+use serai_cosign::SignedCosign;
 
 use futures_util::StreamExt;
 use libp2p::{
   identity::PeerId,
-  request_response::RequestId,
+  request_response::{RequestId, ResponseChannel},
   swarm::{dial_opts::DialOpts, SwarmEvent, Swarm},
 };
 
@@ -42,59 +43,36 @@ use crate::p2p::{
   - Dispatching received requests
   - Sending responses
 */
-struct SwarmTask<D: Db> {
+struct SwarmTask {
   dial_task: TaskHandle,
   to_dial: mpsc::UnboundedReceiver<DialOpts>,
   last_dial_task_run: Instant,
 
   validators: Arc<RwLock<Validators>>,
-
   peers: Peers,
   rebuild_peers_at: Instant,
 
-  db: D,
   swarm: Swarm<Behavior>,
 
   gossip: mpsc::UnboundedReceiver<gossip::Message>,
+  signed_cosigns: mpsc::UnboundedSender<SignedCosign>,
+  tributary_gossip: mpsc::UnboundedSender<(ValidatorSet, Vec<u8>)>,
 
   outbound_requests: mpsc::UnboundedReceiver<(PeerId, Request, oneshot::Sender<Option<Response>>)>,
-  outbound_requests_responses: HashMap<RequestId, oneshot::Sender<Option<Response>>>,
+  outbound_request_responses: HashMap<RequestId, oneshot::Sender<Option<Response>>>,
+
+  inbound_request_response_channels: HashMap<RequestId, ResponseChannel<Response>>,
+  heartbeat_requests: mpsc::UnboundedSender<(RequestId, ValidatorSet, [u8; 32])>,
+  /* TODO
+    let cosigns = Cosigning::<D>::notable_cosigns(&self.db, global_session);
+    let res = reqres::Response::NotableCosigns(cosigns);
+    let _: Result<_, _> = self.swarm.behaviour_mut().reqres.send_response(channel, res);
+  */
+  notable_cosign_requests: mpsc::UnboundedSender<(RequestId, [u8; 32])>,
+  inbound_request_responses: mpsc::UnboundedReceiver<(RequestId, Response)>,
 }
 
-impl<D: Db> SwarmTask<D> {
-  fn handle_reqres(&mut self, event: reqres::Event) {
-    match event {
-      reqres::Event::Message { message, .. } => match message {
-        reqres::Message::Request { request_id: _, request, channel } => {
-          match request {
-            // TODO: Send these
-            reqres::Request::KeepAlive => {}
-            reqres::Request::Heartbeat { set, latest_block_hash } => todo!("TODO"),
-            reqres::Request::NotableCosigns { global_session } => {
-              // TODO: Move this out
-              let cosigns = Cosigning::<D>::notable_cosigns(&self.db, global_session);
-              let res = reqres::Response::NotableCosigns(cosigns);
-              let _: Result<_, _> = self.swarm.behaviour_mut().reqres.send_response(channel, res);
-            }
-          }
-        }
-        reqres::Message::Response { request_id, response } => {
-          // Send Some(response) as the response for the request
-          if let Some(channel) = self.outbound_requests_responses.remove(&request_id) {
-            let _: Result<_, _> = channel.send(Some(response));
-          }
-        }
-      },
-      reqres::Event::OutboundFailure { request_id, .. } => {
-        // Send None as the response for the request
-        if let Some(channel) = self.outbound_requests_responses.remove(&request_id) {
-          let _: Result<_, _> = channel.send(None);
-        }
-      }
-      reqres::Event::InboundFailure { .. } | reqres::Event::ResponseSent { .. } => {}
-    }
-  }
-
+impl SwarmTask {
   fn handle_gossip(&mut self, event: gossip::Event) {
     match event {
       gossip::Event::Message { message, .. } => {
@@ -103,14 +81,56 @@ impl<D: Db> SwarmTask<D> {
           return;
         };
         match message {
-          gossip::Message::Tributary { set, message } => todo!("TODO"),
-          gossip::Message::Cosign(signed_cosign) => todo!("TODO"),
+          gossip::Message::Tributary { set, message } => {
+            let _: Result<_, _> = self.tributary_gossip.send((set, message));
+          }
+          gossip::Message::Cosign(signed_cosign) => {
+            let _: Result<_, _> = self.signed_cosigns.send(signed_cosign);
+          }
         }
       }
       gossip::Event::Subscribed { .. } | gossip::Event::Unsubscribed { .. } => {}
       gossip::Event::GossipsubNotSupported { peer_id } => {
         let _: Result<_, _> = self.swarm.disconnect_peer_id(peer_id);
       }
+    }
+  }
+
+  fn handle_reqres(&mut self, event: reqres::Event) {
+    match event {
+      reqres::Event::Message { message, .. } => match message {
+        reqres::Message::Request { request_id, request, channel } => {
+          match request {
+            // TODO: Send these
+            reqres::Request::KeepAlive => {
+              let _: Result<_, _> =
+                self.swarm.behaviour_mut().reqres.send_response(channel, Response::NoResponse);
+            }
+            reqres::Request::Heartbeat { set, latest_block_hash } => {
+              self.inbound_request_response_channels.insert(request_id, channel);
+              let _: Result<_, _> =
+                self.heartbeat_requests.send((request_id, set, latest_block_hash));
+            }
+            reqres::Request::NotableCosigns { global_session } => {
+              self.inbound_request_response_channels.insert(request_id, channel);
+              let _: Result<_, _> = self.notable_cosign_requests.send((request_id, global_session));
+            }
+          }
+        }
+        reqres::Message::Response { request_id, response } => {
+          // Send Some(response) as the response for the request
+          if let Some(channel) = self.outbound_request_responses.remove(&request_id) {
+            let _: Result<_, _> = channel.send(Some(response));
+          }
+        }
+      },
+      reqres::Event::OutboundFailure { request_id, .. } => {
+        // Send None as the response for the request
+        if let Some(channel) = self.outbound_request_responses.remove(&request_id) {
+          let _: Result<_, _> = channel.send(None);
+        }
+      }
+      reqres::Event::InboundFailure { .. } | reqres::Event::ResponseSent { .. } => {}
     }
   }
 
@@ -228,18 +248,27 @@ impl<D: Db> SwarmTask<D> {
           }
         }
 
-        request = self.outbound_requests.recv() => {
-          let (peer, request, response_channel) =
-            request.expect("channel for requests was closed?");
-          let request_id = self.swarm.behaviour_mut().reqres.send_request(&peer, request);
-          self.outbound_requests_responses.insert(request_id, response_channel);
-        }
-
         message = self.gossip.recv() => {
           let message = message.expect("channel for messages to gossip was closed?");
           let topic = message.topic();
           let message = borsh::to_vec(&message).unwrap();
           let _: Result<_, _> = self.swarm.behaviour_mut().gossip.publish(topic, message);
+        }
+
+        request = self.outbound_requests.recv() => {
+          let (peer, request, response_channel) =
+            request.expect("channel for requests was closed?");
+          let request_id = self.swarm.behaviour_mut().reqres.send_request(&peer, request);
+          self.outbound_request_responses.insert(request_id, response_channel);
+        }
+
+        response = self.inbound_request_responses.recv() => {
+          let (request_id, response) =
+            response.expect("channel for inbound request responses was closed?");
+          if let Some(channel) = self.inbound_request_response_channels.remove(&request_id) {
+            let _: Result<_, _> =
+              self.swarm.behaviour_mut().reqres.send_response(channel, response);
+          }
         }
       }
     }
