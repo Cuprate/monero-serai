@@ -1,8 +1,11 @@
 use core::future::Future;
 use std::collections::HashSet;
 
+use blake2::{digest::typenum::U32, Digest, Blake2b};
 use ciphersuite::{group::GroupEncoding, Ristretto};
 use frost::dkg::ThresholdKeys;
+
+use scale::Encode;
 
 use serai_validator_sets_primitives::Session;
 use serai_in_instructions_primitives::{SignedBatch, batch_message};
@@ -40,7 +43,7 @@ pub(crate) struct BatchSignerTask<D: Db, E: GroupEncoding> {
   external_key: E,
   keys: Vec<ThresholdKeys<Ristretto>>,
 
-  active_signing_protocols: HashSet<u32>,
+  active_signing_protocols: HashSet<[u8; 32]>,
   attempt_manager: AttemptManager<D, WrappedSchnorrkelMachine>,
 }
 
@@ -63,7 +66,6 @@ impl<D: Db, E: GroupEncoding> BatchSignerTask<D, E> {
       active_signing_protocols.insert(id);
 
       let batch = Batches::get(&db, id).unwrap();
-      assert_eq!(batch.id, id);
 
       let mut machines = Vec::with_capacity(keys.len());
       for keys in &keys {
@@ -90,19 +92,21 @@ impl<D: Db, E: Send + GroupEncoding> ContinuallyRan for BatchSignerTask<D, E> {
         iterated = true;
 
         // Save this to the database as a transaction to sign
-        self.active_signing_protocols.insert(batch.id);
+        let batch_hash = <[u8; 32]>::from(Blake2b::<U32>::digest(batch.encode()));
+        self.active_signing_protocols.insert(batch_hash);
         ActiveSigningProtocols::set(
           &mut txn,
           self.session,
           &self.active_signing_protocols.iter().copied().collect(),
         );
-        Batches::set(&mut txn, batch.id, &batch);
+        BatchHash::set(&mut txn, batch.id, &batch_hash);
+        Batches::set(&mut txn, batch_hash, &batch);
 
         let mut machines = Vec::with_capacity(self.keys.len());
         for keys in &self.keys {
           machines.push(WrappedSchnorrkelMachine::new(keys.clone(), batch_message(&batch)));
         }
-        for msg in self.attempt_manager.register(VariantSignId::Batch(batch.id), machines) {
+        for msg in self.attempt_manager.register(VariantSignId::Batch(batch_hash), machines) {
           BatchSignerToCoordinatorMessages::send(&mut txn, self.session, &msg);
         }
 
@@ -112,48 +116,57 @@ impl<D: Db, E: Send + GroupEncoding> ContinuallyRan for BatchSignerTask<D, E> {
       // Check for acknowledged Batches (meaning we should no longer sign for these Batches)
       loop {
         let mut txn = self.db.txn();
-        let Some(id) = AcknowledgedBatches::try_recv(&mut txn, &self.external_key) else {
-          break;
-        };
+        let batch_hash = {
+          let Some(batch_id) = AcknowledgedBatches::try_recv(&mut txn, &self.external_key) else {
+            break;
+          };
 
+          /*
+            We may have yet to register this signing protocol.
+
+            While `BatchesToSign` is populated before `AcknowledgedBatches`, we could theoretically
+            have `BatchesToSign` populated with a new batch _while iterating over
+            `AcknowledgedBatches`_, and then have `AcknowledgedBatched` populated. In that edge
+            case, we will see the acknowledgement notification before we see the transaction.
+
+            In such a case, we break (dropping the txn, re-queueing the acknowledgement
+            notification). On the task's next iteration, we'll process the Batch from
+            `BatchesToSign` and be able to make progress.
+          */
+          let Some(batch_hash) = BatchHash::take(&mut txn, batch_id) else {
+            drop(txn);
+            break;
+          };
+          batch_hash
+        };
+        let batch =
+          Batches::take(&mut txn, batch_hash).expect("BatchHash populated but not Batches");
+
+        iterated = true;
+
+        // Update the last acknowledged Batch
         {
           let last_acknowledged = LastAcknowledgedBatch::get(&txn);
-          if Some(id) > last_acknowledged {
-            LastAcknowledgedBatch::set(&mut txn, &id);
+          if Some(batch.id) > last_acknowledged {
+            LastAcknowledgedBatch::set(&mut txn, &batch.id);
           }
         }
 
-        /*
-          We may have yet to register this signing protocol.
-
-          While `BatchesToSign` is populated before `AcknowledgedBatches`, we could theoretically
-          have `BatchesToSign` populated with a new batch _while iterating over
-          `AcknowledgedBatches`_, and then have `AcknowledgedBatched` populated. In that edge case,
-          we will see the acknowledgement notification before we see the transaction.
-
-          In such a case, we break (dropping the txn, re-queueing the acknowledgement notification).
-          On the task's next iteration, we'll process the Batch from `BatchesToSign` and be
-          able to make progress.
-        */
-        if !self.active_signing_protocols.remove(&id) {
-          break;
-        }
-        iterated = true;
-
-        // Since it was, remove this as an active signing protocol
+        // Remove this as an active signing protocol
+        assert!(self.active_signing_protocols.remove(&batch_hash));
         ActiveSigningProtocols::set(
           &mut txn,
           self.session,
           &self.active_signing_protocols.iter().copied().collect(),
         );
-        // Clean up the database
-        Batches::del(&mut txn, id);
-        SignedBatches::del(&mut txn, id);
+
+        // Clean up SignedBatches
+        SignedBatches::del(&mut txn, batch.id);
 
         // We retire with a txn so we either successfully flag this Batch as acknowledged, and
         // won't re-register it (making this retire safe), or we don't flag it, meaning we will
         // re-register it, yet that's safe as we have yet to retire it
-        self.attempt_manager.retire(&mut txn, VariantSignId::Batch(id));
+        self.attempt_manager.retire(&mut txn, VariantSignId::Batch(batch_hash));
 
         txn.commit();
       }

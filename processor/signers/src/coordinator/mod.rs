@@ -143,7 +143,7 @@ impl<D: Db, C: Coordinator> ContinuallyRan for CoordinatorTask<D, C> {
         // the prior Batch(es) (and accordingly didn't publish them)
         let last_batch =
           crate::batch::last_acknowledged_batch(&txn).max(db::LastPublishedBatch::get(&txn));
-        let mut next_batch = last_batch.map_or(0, |id| id + 1);
+        let mut next_batch = last_batch.map(|id| id + 1).unwrap_or(0);
         while let Some(batch) = crate::batch::signed_batch(&txn, next_batch) {
           iterated = true;
           db::LastPublishedBatch::set(&mut txn, &batch.batch.id);

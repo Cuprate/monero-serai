@@ -5,8 +5,9 @@ use serai_db::{Get, DbTxn, create_db};
 
 create_db! {
   SignersBatch {
-    ActiveSigningProtocols: (session: Session) -> Vec<u32>,
-    Batches: (id: u32) -> Batch,
+    ActiveSigningProtocols: (session: Session) -> Vec<[u8; 32]>,
+    BatchHash: (id: u32) -> [u8; 32],
+    Batches: (hash: [u8; 32]) -> Batch,
     SignedBatches: (id: u32) -> SignedBatch,
     LastAcknowledgedBatch: () -> u32,
   }

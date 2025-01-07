@@ -8996,6 +8996,7 @@ dependencies = [
 name = "serai-processor-signers"
 version = "0.1.0"
 dependencies = [
+ "blake2",
  "borsh",
  "ciphersuite",
  "frost-schnorrkel",
