@@ -11,6 +11,8 @@ use serai_client::primitives::{NetworkId, PublicKey};
 use tokio::sync::{mpsc, RwLock};
 
 use serai_db::Db;
+use serai_task::TaskHandle;
+
 use serai_cosign::Cosigning;
 
 use futures_util::StreamExt;
@@ -82,7 +84,9 @@ struct Behavior {
 }
 
 struct SwarmTask<D: Db> {
+  dial_task: TaskHandle,
   to_dial: mpsc::UnboundedReceiver<DialOpts>,
+  last_dial_task_run: Instant,
 
   validators: Arc<RwLock<Validators>>,
   last_refreshed_validators: Instant,
@@ -232,7 +236,25 @@ impl<D: Db> SwarmTask<D> {
                   .or_insert_with(HashSet::new)
                   .remove(&peer_id);
               }
-              // TODO: dial_task.run_now() if haven't in past minute
+
+              /*
+                We want to re-run the dial task, since we lost a peer, in case we should find new
+                peers. This opens a DoS where a validator repeatedly opens/closes connections to
+                force iterations of the dial task. We prevent this by setting a minimum distance
+                since the last explicit iteration.
+
+                This is suboptimal. If we have several disconnects in immediate proximity, we'll
+                trigger the dial task upon the first (where we may still have enough peers we
+                shouldn't dial more) but not the last (where we may have so few peers left we
+                should dial more). This is accepted as the dial task will eventually run on its
+                natural timer.
+              */
+              const MINIMUM_TIME_SINCE_LAST_EXPLICIT_DIAL: Duration = Duration::from_secs(60);
+              let now = Instant::now();
+              if (self.last_dial_task_run + MINIMUM_TIME_SINCE_LAST_EXPLICIT_DIAL) < now {
+                self.dial_task.run_now();
+                self.last_dial_task_run = now;
+              }
             },
 
             // We don't handle any of these

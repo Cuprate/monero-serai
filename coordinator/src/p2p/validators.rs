@@ -128,6 +128,9 @@ impl Validators {
 
 /// Update the view of the validators.
 ///
+/// This minimizes the time an exclusive lock is held over the validators to minimize the
+/// disruption to functioning.
+///
 /// Returns all validators removed from the active validator set.
 pub(crate) async fn update_shared_validators(
   validators: &Arc<RwLock<Validators>>,
