@@ -17,6 +17,16 @@ use serai_task::ContinuallyRan;
 use crate::p2p::{PORT, Peers, validators::Validators};
 
 const TARGET_PEERS_PER_NETWORK: usize = 5;
+/*
+  If we only tracked the target amount of peers per network, we'd risk being eclipsed by an
+  adversary who immediately connects to us with their array of validators upon our boot. Their
+  array would satisfy our target amount of peers, so we'd never seek more, enabling the adversary
+  to be the only entity we peered with.
+
+  We solve this by additionally requiring an explicit amount of peers we dialed. That means we
+  randomly chose to connect to these peers.
+*/
+// TODO const TARGET_DIALED_PEERS_PER_NETWORK: usize = 3;
 
 struct DialTask {
   serai: Serai,
