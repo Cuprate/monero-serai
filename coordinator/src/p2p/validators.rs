@@ -1,10 +1,12 @@
-use core::borrow::Borrow;
+use core::{borrow::Borrow, future::Future};
 use std::{
   sync::Arc,
   collections::{HashSet, HashMap},
 };
 
 use serai_client::{primitives::NetworkId, validator_sets::primitives::Session, Serai};
+
+use serai_task::{Task, ContinuallyRan};
 
 use libp2p::PeerId;
 
@@ -103,8 +105,6 @@ impl Validators {
   }
 
   /// Update the view of the validators.
-  ///
-  /// Returns all validators removed from the active validator set.
   pub(crate) async fn update(&mut self) -> Result<(), String> {
     let session_changes = Self::session_changes(&self.serai, &self.sessions).await?;
     self.incorporate_session_changes(session_changes);
@@ -124,19 +124,56 @@ impl Validators {
   }
 }
 
-/// Update the view of the validators.
+/// A task which updates a set of validators.
 ///
-/// This minimizes the time an exclusive lock is held over the validators to minimize the
-/// disruption to functioning.
-///
-/// Returns all validators removed from the active validator set.
-pub(crate) async fn update_shared_validators(
-  validators: &Arc<RwLock<Validators>>,
-) -> Result<(), String> {
-  let session_changes = {
-    let validators = validators.read().await;
-    Validators::session_changes(validators.serai.clone(), validators.sessions.clone()).await?
-  };
-  validators.write().await.incorporate_session_changes(session_changes);
-  Ok(())
+/// The validators managed by this tak will have their exclusive lock held for a minimal amount of
+/// time while the update occurs to minimize the disruption to the services relying on it.
+pub(crate) struct UpdateValidatorsTask {
+  validators: Arc<RwLock<Validators>>,
+}
+
+impl UpdateValidatorsTask {
+  /// Spawn a new instance of the UpdateValidatorsTask.
+  ///
+  /// This returns a reference to the Validators it updates after spawning itself.
+  pub(crate) fn spawn(serai: Serai) -> Arc<RwLock<Validators>> {
+    // The validators which will be updated
+    let validators = Arc::new(RwLock::new(Validators {
+      serai,
+      sessions: HashMap::new(),
+      by_network: HashMap::new(),
+      validators: HashMap::new(),
+    }));
+
+    // Define the task
+    let (update_validators_task, update_validators_task_handle) = Task::new();
+    // Forget the handle, as dropping the handle would stop the task
+    core::mem::forget(update_validators_task_handle);
+    // Spawn the task
+    tokio::spawn(
+      (Self { validators: validators.clone() }).continually_run(update_validators_task, vec![]),
+    );
+
+    // Return the validators
+    validators
+  }
+}
+
+impl ContinuallyRan for UpdateValidatorsTask {
+  // Only run every minute, not the default of every five seconds
+  const DELAY_BETWEEN_ITERATIONS: u64 = 60;
+  const MAX_DELAY_BETWEEN_ITERATIONS: u64 = 5 * 60;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+    async move {
+      let session_changes = {
+        let validators = self.validators.read().await;
+        Validators::session_changes(validators.serai.clone(), validators.sessions.clone())
+          .await
+          .map_err(|e| format!("{e:?}"))?
+      };
+      self.validators.write().await.incorporate_session_changes(session_changes);
+      Ok(true)
+    }
+  }
 }

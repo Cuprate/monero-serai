@@ -17,7 +17,7 @@ use serai_cosign::SignedCosign;
 
 /// The maximum message size for the request-response protocol
 // This is derived from the heartbeat message size as it's our largest message
-const MAX_LIBP2P_REQRES_MESSAGE_SIZE: usize =
+pub(crate) const MAX_LIBP2P_REQRES_MESSAGE_SIZE: usize =
   (tributary::BLOCK_SIZE_LIMIT * crate::p2p::heartbeat::BLOCKS_PER_BATCH) + 1024;
 
 const PROTOCOL: &str = "/serai/coordinator/reqres/1.0.0";
@@ -46,14 +46,14 @@ pub(crate) struct TributaryBlockWithCommit {
 /// Responses which can be received via the request-response protocol.
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub(crate) enum Response {
-  NoResponse,
+  None,
   Blocks(Vec<TributaryBlockWithCommit>),
   NotableCosigns(Vec<SignedCosign>),
 }
 impl fmt::Debug for Response {
   fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      Response::NoResponse => fmt.debug_struct("Response::NoResponse").finish(),
+      Response::None => fmt.debug_struct("Response::None").finish(),
       Response::Blocks(_) => fmt.debug_struct("Response::Block").finish_non_exhaustive(),
       Response::NotableCosigns(_) => {
         fmt.debug_struct("Response::NotableCosigns").finish_non_exhaustive()

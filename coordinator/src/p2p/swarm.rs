@@ -28,6 +28,9 @@ use crate::p2p::{
   gossip,
 };
 
+const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(80);
+const TIME_BETWEEN_REBUILD_PEERS: Duration = Duration::from_secs(10 * 60);
+
 /*
   `SwarmTask` handles everything we need the `Swarm` object for. The goal is to minimize the
   contention on this task. Unfortunately, the `Swarm` object itself is needed for a variety of
@@ -43,7 +46,7 @@ use crate::p2p::{
   - Dispatching received requests
   - Sending responses
 */
-struct SwarmTask {
+pub(crate) struct SwarmTask {
   dial_task: TaskHandle,
   to_dial: mpsc::UnboundedReceiver<DialOpts>,
   last_dial_task_run: Instant,
@@ -53,6 +56,8 @@ struct SwarmTask {
   rebuild_peers_at: Instant,
 
   swarm: Swarm<Behavior>,
+
+  last_message: Instant,
 
   gossip: mpsc::UnboundedReceiver<gossip::Message>,
   signed_cosigns: mpsc::UnboundedSender<SignedCosign>,
@@ -99,24 +104,21 @@ impl SwarmTask {
   fn handle_reqres(&mut self, event: reqres::Event) {
     match event {
       reqres::Event::Message { message, .. } => match message {
-        reqres::Message::Request { request_id, request, channel } => {
-          match request {
-            // TODO: Send these
-            reqres::Request::KeepAlive => {
-              let _: Result<_, _> =
-                self.swarm.behaviour_mut().reqres.send_response(channel, Response::NoResponse);
-            }
-            reqres::Request::Heartbeat { set, latest_block_hash } => {
-              self.inbound_request_response_channels.insert(request_id, channel);
-              let _: Result<_, _> =
-                self.heartbeat_requests.send((request_id, set, latest_block_hash));
-            }
-            reqres::Request::NotableCosigns { global_session } => {
-              self.inbound_request_response_channels.insert(request_id, channel);
-              let _: Result<_, _> = self.notable_cosign_requests.send((request_id, global_session));
-            }
+        reqres::Message::Request { request_id, request, channel } => match request {
+          reqres::Request::KeepAlive => {
+            let _: Result<_, _> =
+              self.swarm.behaviour_mut().reqres.send_response(channel, Response::None);
           }
-        }
+          reqres::Request::Heartbeat { set, latest_block_hash } => {
+            self.inbound_request_response_channels.insert(request_id, channel);
+            let _: Result<_, _> =
+              self.heartbeat_requests.send((request_id, set, latest_block_hash));
+          }
+          reqres::Request::NotableCosigns { global_session } => {
+            self.inbound_request_response_channels.insert(request_id, channel);
+            let _: Result<_, _> = self.notable_cosign_requests.send((request_id, global_session));
+          }
+        },
         reqres::Message::Response { request_id, response } => {
           // Send Some(response) as the response for the request
           if let Some(channel) = self.outbound_request_responses.remove(&request_id) {
@@ -136,9 +138,19 @@ impl SwarmTask {
 
   async fn run(mut self) {
     loop {
+      let time_till_keep_alive = Instant::now().saturating_duration_since(self.last_message);
       let time_till_rebuild_peers = self.rebuild_peers_at.saturating_duration_since(Instant::now());
 
       tokio::select! {
+        () = tokio::time::sleep(time_till_keep_alive) => {
+          let peers = self.swarm.connected_peers().copied().collect::<Vec<_>>();
+          let behavior = self.swarm.behaviour_mut();
+          for peer in peers {
+            behavior.reqres.send_request(&peer, Request::KeepAlive);
+          }
+          self.last_message = Instant::now();
+        }
+
         // Dial peers we're instructed to
         dial_opts = self.to_dial.recv() => {
           let dial_opts = dial_opts.expect("DialTask was closed?");
@@ -156,8 +168,6 @@ impl SwarmTask {
           We also use this to disconnect all peers who are no longer active in any network.
         */
         () = tokio::time::sleep(time_till_rebuild_peers) => {
-          const TIME_BETWEEN_REBUILD_PEERS: Duration = Duration::from_secs(10 * 60);
-
           let validators_by_network = self.validators.read().await.by_network().clone();
           let connected_peers = self.swarm.connected_peers().copied().collect::<HashSet<_>>();
 
@@ -253,6 +263,7 @@ impl SwarmTask {
           let topic = message.topic();
           let message = borsh::to_vec(&message).unwrap();
           let _: Result<_, _> = self.swarm.behaviour_mut().gossip.publish(topic, message);
+          self.last_message = Instant::now();
         }
 
         request = self.outbound_requests.recv() => {
@@ -272,5 +283,59 @@ impl SwarmTask {
         }
       }
     }
+  }
+
+  #[allow(clippy::too_many_arguments)]
+  pub(crate) fn new(
+    dial_task: TaskHandle,
+    to_dial: mpsc::UnboundedReceiver<DialOpts>,
+
+    validators: Arc<RwLock<Validators>>,
+    peers: Peers,
+
+    swarm: Swarm<Behavior>,
+
+    gossip: mpsc::UnboundedReceiver<gossip::Message>,
+    signed_cosigns: mpsc::UnboundedSender<SignedCosign>,
+    tributary_gossip: mpsc::UnboundedSender<(ValidatorSet, Vec<u8>)>,
+
+    outbound_requests: mpsc::UnboundedReceiver<(
+      PeerId,
+      Request,
+      oneshot::Sender<Option<Response>>,
+    )>,
+
+    heartbeat_requests: mpsc::UnboundedSender<(RequestId, ValidatorSet, [u8; 32])>,
+    notable_cosign_requests: mpsc::UnboundedSender<(RequestId, [u8; 32])>,
+    inbound_request_responses: mpsc::UnboundedReceiver<(RequestId, Response)>,
+  ) {
+    tokio::spawn(
+      SwarmTask {
+        dial_task,
+        to_dial,
+        last_dial_task_run: Instant::now(),
+
+        validators,
+        peers,
+        rebuild_peers_at: Instant::now() + TIME_BETWEEN_REBUILD_PEERS,
+
+        swarm,
+
+        last_message: Instant::now(),
+
+        gossip,
+        signed_cosigns,
+        tributary_gossip,
+
+        outbound_requests,
+        outbound_request_responses: HashMap::new(),
+
+        inbound_request_response_channels: HashMap::new(),
+        heartbeat_requests,
+        notable_cosign_requests,
+        inbound_request_responses,
+      }
+      .run(),
+    );
   }
 }

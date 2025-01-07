@@ -23,10 +23,11 @@ use crate::p2p::{validators::Validators, peer_id_from_public};
 
 const PROTOCOL: &str = "/serai/coordinator/validators";
 
-struct OnlyValidators {
-  validators: Arc<RwLock<Validators>>,
-  serai_key: Zeroizing<Keypair>,
-  noise_keypair: identity::Keypair,
+#[derive(Clone)]
+pub(crate) struct OnlyValidators {
+  pub(crate) validators: Arc<RwLock<Validators>>,
+  pub(crate) serai_key: Zeroizing<Keypair>,
+  pub(crate) noise_keypair: identity::Keypair,
 }
 
 impl OnlyValidators {
