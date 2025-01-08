@@ -1,4 +1,7 @@
+use core::future::Future;
+
 use tendermint::ext::Network;
+
 use crate::{
   P2p, TendermintTx,
   tendermint::{TARGET_BLOCK_TIME, TendermintNetwork},
@@ -11,10 +14,9 @@ fn assert_target_block_time() {
   #[derive(Clone, Debug)]
   pub struct DummyP2p;
 
-  #[async_trait::async_trait]
   impl P2p for DummyP2p {
-    async fn broadcast(&self, _: [u8; 32], _: Vec<u8>) {
-      unimplemented!()
+    fn broadcast(&self, _: [u8; 32], _: Vec<u8>) -> impl Send + Future<Output = ()> {
+      async move { unimplemented!() }
     }
   }
 

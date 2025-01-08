@@ -1,7 +1,6 @@
-use core::{hash::Hash, fmt::Debug};
+use core::{hash::Hash, fmt::Debug, future::Future};
 use std::{sync::Arc, collections::HashSet};
 
-use async_trait::async_trait;
 use thiserror::Error;
 
 use parity_scale_codec::{Encode, Decode};
@@ -34,7 +33,6 @@ pub struct BlockNumber(pub u64);
 pub struct RoundNumber(pub u32);
 
 /// A signer for a validator.
-#[async_trait]
 pub trait Signer: Send + Sync {
   // Type used to identify validators.
   type ValidatorId: ValidatorId;
@@ -42,22 +40,21 @@ pub trait Signer: Send + Sync {
   type Signature: Signature;
 
   /// Returns the validator's current ID. Returns None if they aren't a current validator.
-  async fn validator_id(&self) -> Option<Self::ValidatorId>;
+  fn validator_id(&self) -> impl Send + Future<Output = Option<Self::ValidatorId>>;
   /// Sign a signature with the current validator's private key.
-  async fn sign(&self, msg: &[u8]) -> Self::Signature;
+  fn sign(&self, msg: &[u8]) -> impl Send + Future<Output = Self::Signature>;
 }
 
-#[async_trait]
 impl<S: Signer> Signer for Arc<S> {
   type ValidatorId = S::ValidatorId;
   type Signature = S::Signature;
 
-  async fn validator_id(&self) -> Option<Self::ValidatorId> {
-    self.as_ref().validator_id().await
+  fn validator_id(&self) -> impl Send + Future<Output = Option<Self::ValidatorId>> {
+    self.as_ref().validator_id()
   }
 
-  async fn sign(&self, msg: &[u8]) -> Self::Signature {
-    self.as_ref().sign(msg).await
+  fn sign(&self, msg: &[u8]) -> impl Send + Future<Output = Self::Signature> {
+    self.as_ref().sign(msg)
   }
 }
 
@@ -210,7 +207,6 @@ pub trait Block: Send + Sync + Clone + PartialEq + Eq + Debug + Encode + Decode 
 }
 
 /// Trait representing the distributed system Tendermint is providing consensus over.
-#[async_trait]
 pub trait Network: Sized + Send + Sync {
   /// The database used to back this.
   type Db: serai_db::Db;
@@ -229,6 +225,7 @@ pub trait Network: Sized + Send + Sync {
   /// This should include both the time to download the block and the actual processing time.
   ///
   /// BLOCK_PROCESSING_TIME + (3 * LATENCY_TIME) must be divisible by 1000.
+  // TODO: Redefine as Duration
   const BLOCK_PROCESSING_TIME: u32;
   /// Network latency time in milliseconds.
   ///
@@ -280,15 +277,19 @@ pub trait Network: Sized + Send + Sync {
   /// Switching to unauthenticated channels in a system already providing authenticated channels is
   /// not recommended as this is a minor, temporal inefficiency, while downgrading channels may
   /// have wider implications.
-  async fn broadcast(&mut self, msg: SignedMessageFor<Self>);
+  fn broadcast(&mut self, msg: SignedMessageFor<Self>) -> impl Send + Future<Output = ()>;
 
   /// Trigger a slash for the validator in question who was definitively malicious.
   ///
   /// The exact process of triggering a slash is undefined and left to the network as a whole.
-  async fn slash(&mut self, validator: Self::ValidatorId, slash_event: SlashEvent);
+  fn slash(
+    &mut self,
+    validator: Self::ValidatorId,
+    slash_event: SlashEvent,
+  ) -> impl Send + Future<Output = ()>;
 
   /// Validate a block.
-  async fn validate(&self, block: &Self::Block) -> Result<(), BlockError>;
+  fn validate(&self, block: &Self::Block) -> impl Send + Future<Output = Result<(), BlockError>>;
 
   /// Add a block, returning the proposal for the next one.
   ///
@@ -298,9 +299,9 @@ pub trait Network: Sized + Send + Sync {
   /// This deviates from the paper which will have a local node refuse to decide on a block it
   /// considers invalid. This library acknowledges the network did decide on it, leaving handling
   /// of it to the network, and outside of this scope.
-  async fn add_block(
+  fn add_block(
     &mut self,
     block: Self::Block,
     commit: Commit<Self::SignatureScheme>,
-  ) -> Option<Self::Block>;
+  ) -> impl Send + Future<Output = Option<Self::Block>>;
 }

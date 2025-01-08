@@ -10498,7 +10498,6 @@ dependencies = [
 name = "tendermint-machine"
 version = "0.2.0"
 dependencies = [
- "async-trait",
  "futures-channel",
  "futures-util",
  "hex",
@@ -10941,7 +10940,6 @@ dependencies = [
 name = "tributary-chain"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "blake2",
  "ciphersuite",
  "flexible-transcript",

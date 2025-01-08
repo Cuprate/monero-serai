@@ -1,7 +1,5 @@
-use core::{marker::PhantomData, fmt::Debug};
+use core::{marker::PhantomData, fmt::Debug, future::Future};
 use std::{sync::Arc, io};
-
-use async_trait::async_trait;
 
 use zeroize::Zeroizing;
 
@@ -131,20 +129,18 @@ pub trait ReadWrite: Sized {
   }
 }
 
-#[async_trait]
 pub trait P2p: 'static + Send + Sync + Clone + Debug {
   /// Broadcast a message to all other members of the Tributary with the specified genesis.
   ///
   /// The Tributary will re-broadcast consensus messages on a fixed interval to ensure they aren't
   /// prematurely dropped from the P2P layer. THe P2P layer SHOULD perform content-based
   /// deduplication to ensure a sane amount of load.
-  async fn broadcast(&self, genesis: [u8; 32], msg: Vec<u8>);
+  fn broadcast(&self, genesis: [u8; 32], msg: Vec<u8>) -> impl Send + Future<Output = ()>;
 }
 
-#[async_trait]
 impl<P: P2p> P2p for Arc<P> {
-  async fn broadcast(&self, genesis: [u8; 32], msg: Vec<u8>) {
-    (*self).broadcast(genesis, msg).await
+  fn broadcast(&self, genesis: [u8; 32], msg: Vec<u8>) -> impl Send + Future<Output = ()> {
+    P::broadcast(self, genesis, msg)
   }
 }
 

@@ -1,9 +1,8 @@
+use core::future::Future;
 use std::{
   sync::Arc,
   time::{UNIX_EPOCH, SystemTime, Duration},
 };
-
-use async_trait::async_trait;
 
 use parity_scale_codec::{Encode, Decode};
 
@@ -21,20 +20,21 @@ type TestValidatorId = u16;
 type TestBlockId = [u8; 4];
 
 struct TestSigner(u16);
-#[async_trait]
 impl Signer for TestSigner {
   type ValidatorId = TestValidatorId;
   type Signature = [u8; 32];
 
-  async fn validator_id(&self) -> Option<TestValidatorId> {
-    Some(self.0)
+  fn validator_id(&self) -> impl Send + Future<Output = Option<TestValidatorId>> {
+    async move { Some(self.0) }
   }
 
-  async fn sign(&self, msg: &[u8]) -> [u8; 32] {
-    let mut sig = [0; 32];
-    sig[.. 2].copy_from_slice(&self.0.to_le_bytes());
-    sig[2 .. (2 + 30.min(msg.len()))].copy_from_slice(&msg[.. 30.min(msg.len())]);
-    sig
+  fn sign(&self, msg: &[u8]) -> impl Send + Future<Output = [u8; 32]> {
+    async move {
+      let mut sig = [0; 32];
+      sig[.. 2].copy_from_slice(&self.0.to_le_bytes());
+      sig[2 .. (2 + 30.min(msg.len()))].copy_from_slice(&msg[.. 30.min(msg.len())]);
+      sig
+    }
   }
 }
 
@@ -111,7 +111,6 @@ struct TestNetwork(
   Arc<RwLock<Vec<(MessageSender<Self>, SyncedBlockSender<Self>, SyncedBlockResultReceiver)>>>,
 );
 
-#[async_trait]
 impl Network for TestNetwork {
   type Db = MemDb;
 
