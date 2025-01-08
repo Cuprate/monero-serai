@@ -63,8 +63,8 @@ pub(crate) struct SwarmTask {
   signed_cosigns: mpsc::UnboundedSender<SignedCosign>,
   tributary_gossip: mpsc::UnboundedSender<(ValidatorSet, Vec<u8>)>,
 
-  outbound_requests: mpsc::UnboundedReceiver<(PeerId, Request, oneshot::Sender<Option<Response>>)>,
-  outbound_request_responses: HashMap<RequestId, oneshot::Sender<Option<Response>>>,
+  outbound_requests: mpsc::UnboundedReceiver<(PeerId, Request, oneshot::Sender<Response>)>,
+  outbound_request_responses: HashMap<RequestId, oneshot::Sender<Response>>,
 
   inbound_request_response_channels: HashMap<RequestId, ResponseChannel<Response>>,
   heartbeat_requests: mpsc::UnboundedSender<(RequestId, ValidatorSet, [u8; 32])>,
@@ -120,16 +120,15 @@ impl SwarmTask {
           }
         },
         reqres::Message::Response { request_id, response } => {
-          // Send Some(response) as the response for the request
           if let Some(channel) = self.outbound_request_responses.remove(&request_id) {
-            let _: Result<_, _> = channel.send(Some(response));
+            let _: Result<_, _> = channel.send(response);
           }
         }
       },
       reqres::Event::OutboundFailure { request_id, .. } => {
         // Send None as the response for the request
         if let Some(channel) = self.outbound_request_responses.remove(&request_id) {
-          let _: Result<_, _> = channel.send(None);
+          let _: Result<_, _> = channel.send(Response::None);
         }
       }
       reqres::Event::InboundFailure { .. } | reqres::Event::ResponseSent { .. } => {}
@@ -299,11 +298,7 @@ impl SwarmTask {
     signed_cosigns: mpsc::UnboundedSender<SignedCosign>,
     tributary_gossip: mpsc::UnboundedSender<(ValidatorSet, Vec<u8>)>,
 
-    outbound_requests: mpsc::UnboundedReceiver<(
-      PeerId,
-      Request,
-      oneshot::Sender<Option<Response>>,
-    )>,
+    outbound_requests: mpsc::UnboundedReceiver<(PeerId, Request, oneshot::Sender<Response>)>,
 
     heartbeat_requests: mpsc::UnboundedSender<(RequestId, ValidatorSet, [u8; 32])>,
     notable_cosign_requests: mpsc::UnboundedSender<(RequestId, [u8; 32])>,

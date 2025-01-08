@@ -1,8 +1,9 @@
 use core::future::Future;
-
 use std::time::{Duration, SystemTime};
 
 use serai_client::validator_sets::primitives::ValidatorSet;
+
+use futures_util::FutureExt;
 
 use tributary::{ReadWrite, Block, Tributary, TributaryReader};
 
@@ -71,7 +72,10 @@ impl<TD: Db, P: P2p> ContinuallyRan for HeartbeatTask<TD, P> {
               tip = self.reader.tip();
               tip_is_stale = false;
             }
-            let Ok(blocks) = peer.send_heartbeat(self.set, tip).await else { continue 'peer };
+            // Necessary due to https://github.com/rust-lang/rust/issues/100013
+            let Some(blocks) = peer.send_heartbeat(self.set, tip).boxed().await else {
+              continue 'peer;
+            };
 
             // This is the final batch if it has less than the maximum amount of blocks
             // (signifying there weren't more blocks after this to fill the batch with)

@@ -1,4 +1,4 @@
-use core::future::Future;
+use core::{future::Future, time::Duration};
 use std::{
   sync::Arc,
   collections::{HashSet, HashMap},
@@ -9,10 +9,11 @@ use schnorrkel::Keypair;
 
 use serai_client::{
   primitives::{NetworkId, PublicKey},
+  validator_sets::primitives::ValidatorSet,
   Serai,
 };
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, oneshot, RwLock};
 
 use serai_task::{Task, ContinuallyRan};
 
@@ -24,6 +25,8 @@ use libp2p::{
   swarm::NetworkBehaviour,
   SwarmBuilder,
 };
+
+use crate::p2p::TributaryBlockWithCommit;
 
 /// A struct to sync the validators from the Serai node in order to keep track of them.
 mod validators;
@@ -64,10 +67,31 @@ fn peer_id_from_public(public: PublicKey) -> PeerId {
   PeerId::from_multihash(Multihash::wrap(0, &public.0).unwrap()).unwrap()
 }
 
-struct Peer;
-impl Peer {
-  async fn send(&self, request: Request) -> Result<Response, tokio::time::error::Elapsed> {
-    (async move { todo!("TODO") }).await
+struct Peer<'a> {
+  outbound_requests: &'a mpsc::UnboundedSender<(PeerId, Request, oneshot::Sender<Response>)>,
+  id: PeerId,
+}
+impl crate::p2p::Peer<'_> for Peer<'_> {
+  fn send_heartbeat(
+    &self,
+    set: ValidatorSet,
+    latest_block_hash: [u8; 32],
+  ) -> impl Send + Future<Output = Option<Vec<TributaryBlockWithCommit>>> {
+    const HEARBEAT_TIMEOUT: Duration = Duration::from_secs(5);
+    async move {
+      let request = Request::Heartbeat { set, latest_block_hash };
+      let (sender, receiver) = oneshot::channel();
+      self
+        .outbound_requests
+        .send((self.id, request, sender))
+        .expect("outbound requests recv channel was dropped?");
+      match tokio::time::timeout(HEARBEAT_TIMEOUT, receiver).await.ok()?.ok()? {
+        Response::None => Some(vec![]),
+        Response::Blocks(blocks) => Some(blocks),
+        // TODO: Disconnect this peer
+        Response::NotableCosigns(_) => None,
+      }
+    }
   }
 }
 
@@ -82,9 +106,14 @@ struct Behavior {
   gossip: gossip::Behavior,
 }
 
-struct LibP2p;
-impl LibP2p {
-  pub(crate) fn new(serai_key: &Zeroizing<Keypair>, serai: Serai) -> LibP2p {
+#[derive(Clone)]
+struct Libp2p {
+  peers: Peers,
+  outbound_requests: mpsc::UnboundedSender<(PeerId, Request, oneshot::Sender<Response>)>,
+}
+
+impl Libp2p {
+  pub(crate) fn new(serai_key: &Zeroizing<Keypair>, serai: Serai) -> Libp2p {
     // Define the object we track peers with
     let peers = Peers { peers: Arc::new(RwLock::new(HashMap::new())) };
 
@@ -159,5 +188,27 @@ impl LibP2p {
     // gossip_send, signed_cosigns_recv, tributary_gossip_recv, outbound_requests_send,
     // heartbeat_requests_recv, notable_cosign_requests_recv, inbound_request_responses_send
     todo!("TODO");
+  }
+}
+
+impl tributary::P2p for Libp2p {
+  fn broadcast(&self, genesis: [u8; 32], msg: Vec<u8>) -> impl Send + Future<Output = ()> {
+    async move { todo!("TODO") }
+  }
+}
+
+impl crate::p2p::P2p for Libp2p {
+  type Peer<'a> = Peer<'a>;
+  fn peers(&self, network: NetworkId) -> impl Send + Future<Output = Vec<Self::Peer<'_>>> {
+    async move {
+      let Some(peer_ids) = self.peers.peers.read().await.get(&network).cloned() else {
+        return vec![];
+      };
+      let mut res = vec![];
+      for id in peer_ids {
+        res.push(Peer { outbound_requests: &self.outbound_requests, id });
+      }
+      res
+    }
   }
 }

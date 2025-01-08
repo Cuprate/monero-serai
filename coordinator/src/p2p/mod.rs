@@ -1,7 +1,5 @@
 use core::future::Future;
 
-use tokio::time::error::Elapsed;
-
 use borsh::{BorshSerialize, BorshDeserialize};
 
 use serai_client::{primitives::NetworkId, validator_sets::primitives::ValidatorSet};
@@ -19,15 +17,15 @@ pub(crate) struct TributaryBlockWithCommit {
   pub(crate) commit: Vec<u8>,
 }
 
-trait Peer: Send {
+trait Peer<'a>: Send {
   fn send_heartbeat(
     &self,
     set: ValidatorSet,
     latest_block_hash: [u8; 32],
-  ) -> impl Send + Future<Output = Result<Vec<TributaryBlockWithCommit>, Elapsed>>;
+  ) -> impl Send + Future<Output = Option<Vec<TributaryBlockWithCommit>>>;
 }
 
 trait P2p: Send + Sync + tributary::P2p {
-  type Peer: Peer;
-  fn peers(&self, network: NetworkId) -> impl Send + Future<Output = Vec<Self::Peer>>;
+  type Peer<'a>: Peer<'a>;
+  fn peers(&self, network: NetworkId) -> impl Send + Future<Output = Vec<Self::Peer<'_>>>;
 }

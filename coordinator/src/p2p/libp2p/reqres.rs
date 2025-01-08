@@ -15,6 +15,8 @@ pub use request_response::Message;
 
 use serai_cosign::SignedCosign;
 
+use crate::p2p::TributaryBlockWithCommit;
+
 /// The maximum message size for the request-response protocol
 // This is derived from the heartbeat message size as it's our largest message
 pub(crate) const MAX_LIBP2P_REQRES_MESSAGE_SIZE: usize =
@@ -34,13 +36,6 @@ pub(crate) enum Request {
   Heartbeat { set: ValidatorSet, latest_block_hash: [u8; 32] },
   /// A request for the notable cosigns for a global session.
   NotableCosigns { global_session: [u8; 32] },
-}
-
-/// A tributary block and its commit.
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
-pub(crate) struct TributaryBlockWithCommit {
-  pub(crate) block: Vec<u8>,
-  pub(crate) commit: Vec<u8>,
 }
 
 /// Responses which can be received via the request-response protocol.
