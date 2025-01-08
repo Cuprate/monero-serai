@@ -11,10 +11,7 @@ use serai_task::ContinuallyRan;
 
 use crate::{
   tributary::Transaction,
-  p2p::{
-    reqres::{Request, Response},
-    P2p,
-  },
+  p2p::{Peer, P2p},
 };
 
 // Amount of blocks in a minute
@@ -28,14 +25,14 @@ pub const BLOCKS_PER_BATCH: usize = BLOCKS_PER_MINUTE + 1;
 ///
 /// If the other validator has more blocks then we do, they're expected to inform us. This forms
 /// the sync protocol for our Tributaries.
-struct HeartbeatTask<TD: Db> {
+struct HeartbeatTask<TD: Db, P: P2p> {
   set: ValidatorSet,
-  tributary: Tributary<TD, Transaction, P2p>,
+  tributary: Tributary<TD, Transaction, P>,
   reader: TributaryReader<TD, Transaction>,
-  p2p: P2p,
+  p2p: P,
 }
 
-impl<TD: Db> ContinuallyRan for HeartbeatTask<TD> {
+impl<TD: Db, P: P2p> ContinuallyRan for HeartbeatTask<TD, P> {
   fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
     async move {
       // If our blockchain hasn't had a block in the past minute, trigger the heartbeat protocol
@@ -74,8 +71,7 @@ impl<TD: Db> ContinuallyRan for HeartbeatTask<TD> {
               tip = self.reader.tip();
               tip_is_stale = false;
             }
-            let request = Request::Heartbeat { set: self.set, latest_block_hash: tip };
-            let Ok(Response::Blocks(blocks)) = peer.send(request).await else { continue 'peer };
+            let Ok(blocks) = peer.send_heartbeat(self.set, tip).await else { continue 'peer };
 
             // This is the final batch if it has less than the maximum amount of blocks
             // (signifying there weren't more blocks after this to fill the batch with)

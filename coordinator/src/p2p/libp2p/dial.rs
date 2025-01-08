@@ -14,7 +14,7 @@ use libp2p::{
 
 use serai_task::ContinuallyRan;
 
-use crate::p2p::{PORT, Peers, validators::Validators};
+use crate::p2p::libp2p::{PORT, Peers, validators::Validators};
 
 const TARGET_PEERS_PER_NETWORK: usize = 5;
 /*

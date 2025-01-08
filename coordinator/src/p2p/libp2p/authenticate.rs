@@ -19,7 +19,7 @@ use libp2p::{
   noise,
 };
 
-use crate::p2p::{validators::Validators, peer_id_from_public};
+use crate::p2p::libp2p::{validators::Validators, peer_id_from_public};
 
 const PROTOCOL: &str = "/serai/coordinator/validators";
 

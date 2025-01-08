@@ -13,7 +13,7 @@ use libp2p::PeerId;
 use futures_util::stream::{StreamExt, FuturesUnordered};
 use tokio::sync::RwLock;
 
-use crate::p2p::peer_id_from_public;
+use crate::p2p::libp2p::peer_id_from_public;
 
 pub(crate) struct Validators {
   serai: Serai,

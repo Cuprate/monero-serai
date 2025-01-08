@@ -21,7 +21,7 @@ use libp2p::{
   swarm::{dial_opts::DialOpts, SwarmEvent, Swarm},
 };
 
-use crate::p2p::{
+use crate::p2p::libp2p::{
   Peers, BehaviorEvent, Behavior,
   validators::Validators,
   reqres::{self, Request, Response},
@@ -286,7 +286,7 @@ impl SwarmTask {
   }
 
   #[allow(clippy::too_many_arguments)]
-  pub(crate) fn new(
+  pub(crate) fn spawn(
     dial_task: TaskHandle,
     to_dial: mpsc::UnboundedReceiver<DialOpts>,
 
