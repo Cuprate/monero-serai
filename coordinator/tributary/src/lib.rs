@@ -129,7 +129,7 @@ pub trait ReadWrite: Sized {
   }
 }
 
-pub trait P2p: 'static + Send + Sync + Clone + Debug {
+pub trait P2p: 'static + Send + Sync + Clone {
   /// Broadcast a message to all other members of the Tributary with the specified genesis.
   ///
   /// The Tributary will re-broadcast consensus messages on a fixed interval to ensure they aren't
