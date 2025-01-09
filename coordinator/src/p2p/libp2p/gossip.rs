@@ -31,10 +31,10 @@ pub(crate) enum Message {
 }
 
 impl Message {
-  pub(crate) fn topic(&self) -> TopicHash {
+  pub(crate) fn topic(&self) -> IdentTopic {
     match self {
-      Message::Tributary { tributary, .. } => topic_for_tributary(*tributary).hash(),
-      Message::Cosign(_) => IdentTopic::new(BASE_TOPIC).hash(),
+      Message::Tributary { tributary, .. } => topic_for_tributary(*tributary),
+      Message::Cosign(_) => IdentTopic::new(BASE_TOPIC),
     }
   }
 }
