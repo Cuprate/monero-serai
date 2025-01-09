@@ -26,8 +26,8 @@ serai-client = { path = "../../substrate/client", default-features = false, feat
 serai-cosign = { path = "../cosign" }
 tributary = { package = "tributary-chain", path = "../tributary" }
 
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
-tokio = { version = "1", default-features = false, features = ["sync"] }
+async-channel = { version = "2", default-features = false, features = ["std"] }
+futures-lite = { version = "2", default-features = false, features = ["std"] }
 
 log = { version = "0.4", default-features = false, features = ["std"] }
 serai-task = { path = "../../common/task", version = "0.1" }

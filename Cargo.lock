@@ -841,6 +841,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-channel"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89b47800b0be77592da0afd425cc03468052844aff33b84e33cc696f64e77b6a"
+dependencies = [
+ "concurrent-queue",
+ "event-listener-strategy",
+ "futures-core",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "async-io"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2528,7 +2540,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3047,7 +3059,10 @@ version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cef40d21ae2c515b51041df9ed313ed21e572df340ea58a922a0aefe7e8891a1"
 dependencies = [
+ "fastrand",
  "futures-core",
+ "futures-io",
+ "parking",
  "pin-project-lite",
 ]
 
@@ -3548,7 +3563,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "socket2 0.4.10",
+ "socket2 0.5.8",
  "tokio",
  "tower-service",
  "tracing",
@@ -4112,7 +4127,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -6907,7 +6922,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7450,7 +7465,7 @@ version = "0.10.0-dev"
 source = "git+https://github.com/serai-dex/substrate#6e3f07bf5c98a6a3ec15f2b1a46148aa8c7d737a"
 dependencies = [
  "array-bytes",
- "async-channel",
+ "async-channel 1.9.0",
  "async-trait",
  "asynchronous-codec",
  "bytes",
@@ -7491,7 +7506,7 @@ name = "sc-network-bitswap"
 version = "0.10.0-dev"
 source = "git+https://github.com/serai-dex/substrate#6e3f07bf5c98a6a3ec15f2b1a46148aa8c7d737a"
 dependencies = [
- "async-channel",
+ "async-channel 1.9.0",
  "cid",
  "futures",
  "libp2p-identity",
@@ -7548,7 +7563,7 @@ version = "0.10.0-dev"
 source = "git+https://github.com/serai-dex/substrate#6e3f07bf5c98a6a3ec15f2b1a46148aa8c7d737a"
 dependencies = [
  "array-bytes",
- "async-channel",
+ "async-channel 1.9.0",
  "futures",
  "libp2p-identity",
  "log",
@@ -7569,7 +7584,7 @@ version = "0.10.0-dev"
 source = "git+https://github.com/serai-dex/substrate#6e3f07bf5c98a6a3ec15f2b1a46148aa8c7d737a"
 dependencies = [
  "array-bytes",
- "async-channel",
+ "async-channel 1.9.0",
  "async-trait",
  "fork-tree",
  "futures",
@@ -7943,7 +7958,7 @@ name = "sc-utils"
 version = "4.0.0-dev"
 source = "git+https://github.com/serai-dex/substrate#6e3f07bf5c98a6a3ec15f2b1a46148aa8c7d737a"
 dependencies = [
- "async-channel",
+ "async-channel 1.9.0",
  "futures",
  "futures-timer",
  "lazy_static",
@@ -8369,14 +8384,14 @@ dependencies = [
 name = "serai-coordinator-p2p"
 version = "0.1.0"
 dependencies = [
+ "async-channel 2.3.1",
  "borsh",
- "futures-util",
+ "futures-lite",
  "log",
  "serai-client",
  "serai-cosign",
  "serai-db",
  "serai-task",
- "tokio",
  "tributary-chain",
 ]
 
@@ -10528,7 +10543,7 @@ dependencies = [
  "getrandom",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11752,7 +11767,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

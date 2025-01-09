@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime};
 
 use serai_client::validator_sets::primitives::ValidatorSet;
 
-use futures_util::FutureExt;
+use futures_lite::FutureExt;
 
 use tributary::{ReadWrite, TransactionTrait, Block, Tributary, TributaryReader};
 

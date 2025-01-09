@@ -19,7 +19,7 @@ use serai_client::{
   Serai,
 };
 
-use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 
 use serai_task::{Task, ContinuallyRan};
 
@@ -35,7 +35,7 @@ use libp2p::{
   SwarmBuilder,
 };
 
-use serai_coordinator_p2p::{Heartbeat, TributaryBlockWithCommit};
+use serai_coordinator_p2p::{oneshot, Heartbeat, TributaryBlockWithCommit};
 
 /// A struct to sync the validators from the Serai node in order to keep track of them.
 mod validators;

@@ -8,9 +8,10 @@ use borsh::{BorshSerialize, BorshDeserialize};
 
 use serai_client::{primitives::NetworkId, validator_sets::primitives::ValidatorSet};
 
-use tokio::sync::oneshot;
-
 use serai_cosign::SignedCosign;
+
+/// A oneshot channel.
+pub mod oneshot;
 
 /// The heartbeat task, effecting sync of Tributaries
 pub mod heartbeat;

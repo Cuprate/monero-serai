@@ -8,7 +8,7 @@ use borsh::BorshDeserialize;
 
 use serai_client::validator_sets::primitives::ValidatorSet;
 
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{mpsc, RwLock};
 
 use serai_task::TaskHandle;
 
@@ -21,7 +21,7 @@ use libp2p::{
   swarm::{dial_opts::DialOpts, SwarmEvent, Swarm},
 };
 
-use serai_coordinator_p2p::Heartbeat;
+use serai_coordinator_p2p::{oneshot, Heartbeat};
 
 use crate::{
   Peers, BehaviorEvent, Behavior,
