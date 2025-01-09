@@ -1,3 +1,15 @@
+//! A libp2p-based backend for P2p.
+//!
+//! The libp2p swarm is limited to validators from the Serai network. The swarm does not maintain
+//! any of its own peer finding/routing infrastructure, instead relying on the Serai network's
+//! connection information to dial peers. This does limit the listening peers to only the peers
+//! immediately reachable via the same IP address (despite the two distinct services), not hidden
+//! behind a NAT, yet is also quite simple and gives full control of who to connect to to us.
+//!
+//! Peers are decided via the `DialTask` which aims to maintain a target amount of peers from each
+//! external network.
+// TODO: Consider adding that infrastructure, leaving the Serai network solely for bootstrapping
+
 use core::{future::Future, time::Duration};
 use std::{
   sync::Arc,
@@ -113,10 +125,15 @@ struct Peers {
 
 #[derive(NetworkBehaviour)]
 struct Behavior {
+  // Used to only allow Serai validators as peers
   allow_list: allow_block_list::Behaviour<allow_block_list::AllowedPeers>,
+  // Used to limit each peer to a single connection
   connection_limits: connection_limits::Behaviour,
+  // Used to ensure connection latency is within tolerances
   ping: ping::Behavior,
+  // Used to request data from specific peers
   reqres: reqres::Behavior,
+  // Used to broadcast messages to all other peers subscribed to a topic
   gossip: gossip::Behavior,
 }
 

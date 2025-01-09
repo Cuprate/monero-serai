@@ -8,7 +8,7 @@ use tokio::sync::oneshot;
 
 use serai_cosign::SignedCosign;
 
-/// The libp2p-backed P2p network
+/// The libp2p-backed P2P network
 mod libp2p;
 
 /// The heartbeat task, effecting sync of Tributaries
