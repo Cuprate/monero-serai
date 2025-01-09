@@ -58,7 +58,6 @@ pub(crate) fn new_behavior() -> Behavior {
     .history_gossip(usize::try_from(heartbeats_to_gossip).unwrap())
     .heartbeat_interval(Duration::from_millis(heartbeat_interval.into()))
     .max_transmit_size(MAX_LIBP2P_GOSSIP_MESSAGE_SIZE)
-    .idle_timeout(KEEP_ALIVE_INTERVAL + Duration::from_secs(5))
     .duplicate_cache_time(Duration::from_millis((heartbeats_to_keep * heartbeat_interval).into()))
     .validation_mode(ValidationMode::Anonymous)
     // Uses a content based message ID to avoid duplicates as much as possible

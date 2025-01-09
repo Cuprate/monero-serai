@@ -44,6 +44,9 @@ use authenticate::OnlyValidators;
 mod dial;
 use dial::DialTask;
 
+/// The ping behavior, used to ensure connection latency is below the limit
+mod ping;
+
 /// The request-response messages and behavior
 mod reqres;
 use reqres::{RequestId, Request, Response};
@@ -109,6 +112,7 @@ struct Peers {
 
 #[derive(NetworkBehaviour)]
 struct Behavior {
+  ping: ping::Behavior,
   reqres: reqres::Behavior,
   gossip: gossip::Behavior,
 }
@@ -162,14 +166,19 @@ impl Libp2p {
       config
     };
 
-    let behavior = Behavior { reqres: reqres::new_behavior(), gossip: gossip::new_behavior() };
-
     let mut swarm = SwarmBuilder::with_existing_identity(identity::Keypair::generate_ed25519())
       .with_tokio()
       .with_tcp(TcpConfig::default().nodelay(false), new_only_validators, new_yamux)
       .unwrap()
-      .with_behaviour(|_| behavior)
+      .with_behaviour(|_| Behavior {
+        ping: ping::new_behavior(),
+        reqres: reqres::new_behavior(),
+        gossip: gossip::new_behavior(),
+      })
       .unwrap()
+      .with_swarm_config(|config| {
+        config.with_idle_connection_timeout(ping::INTERVAL + ping::TIMEOUT + Duration::from_secs(5))
+      })
       .build();
     swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{PORT}").parse().unwrap()).unwrap();
     swarm.listen_on(format!("/ip6/::/tcp/{PORT}").parse().unwrap()).unwrap();

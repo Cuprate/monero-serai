@@ -27,8 +27,6 @@ const PROTOCOL: &str = "/serai/coordinator/reqres/1.0.0";
 /// Requests which can be made via the request-response protocol.
 #[derive(Clone, Copy, Debug, BorshSerialize, BorshDeserialize)]
 pub(crate) enum Request {
-  /// A keep-alive to prevent our connections from being dropped.
-  KeepAlive,
   /// A heartbeat informing our peers of our latest block, for the specified blockchain, on regular
   /// intervals.
   ///

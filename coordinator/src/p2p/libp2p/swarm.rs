@@ -24,11 +24,11 @@ use libp2p::{
 use crate::p2p::libp2p::{
   Peers, BehaviorEvent, Behavior,
   validators::Validators,
+  ping,
   reqres::{self, Request, Response},
   gossip,
 };
 
-const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(80);
 const TIME_BETWEEN_REBUILD_PEERS: Duration = Duration::from_secs(10 * 60);
 
 /*
@@ -106,10 +106,6 @@ impl SwarmTask {
     match event {
       reqres::Event::Message { message, .. } => match message {
         reqres::Message::Request { request_id, request, channel } => match request {
-          reqres::Request::KeepAlive => {
-            let _: Result<_, _> =
-              self.swarm.behaviour_mut().reqres.send_response(channel, Response::None);
-          }
           reqres::Request::Heartbeat { set, latest_block_hash } => {
             self.inbound_request_response_channels.insert(request_id, channel);
             let _: Result<_, _> =
@@ -138,19 +134,9 @@ impl SwarmTask {
 
   async fn run(mut self) {
     loop {
-      let time_till_keep_alive = Instant::now().saturating_duration_since(self.last_message);
       let time_till_rebuild_peers = self.rebuild_peers_at.saturating_duration_since(Instant::now());
 
       tokio::select! {
-        () = tokio::time::sleep(time_till_keep_alive) => {
-          let peers = self.swarm.connected_peers().copied().collect::<Vec<_>>();
-          let behavior = self.swarm.behaviour_mut();
-          for peer in peers {
-            behavior.reqres.send_request(&peer, Request::KeepAlive);
-          }
-          self.last_message = Instant::now();
-        }
-
         // Dial peers we're instructed to
         dial_opts = self.to_dial.recv() => {
           let dial_opts = dial_opts.expect("DialTask was closed?");
@@ -239,6 +225,13 @@ impl SwarmTask {
               }
             }
 
+            SwarmEvent::Behaviour(
+              BehaviorEvent::Ping(ping::Event { peer: _, connection, result, })
+            ) => {
+              if result.is_err() {
+                self.swarm.close_connection(connection);
+              }
+            }
             SwarmEvent::Behaviour(BehaviorEvent::Reqres(event)) => {
               self.handle_reqres(event)
             }
