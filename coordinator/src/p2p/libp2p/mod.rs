@@ -25,7 +25,7 @@ use libp2p::{
   multihash::Multihash,
   identity::{self, PeerId},
   tcp::Config as TcpConfig,
-  yamux,
+  yamux, allow_block_list,
   swarm::NetworkBehaviour,
   SwarmBuilder,
 };
@@ -112,6 +112,7 @@ struct Peers {
 
 #[derive(NetworkBehaviour)]
 struct Behavior {
+  allow_list: allow_block_list::Behaviour<allow_block_list::AllowedPeers>,
   ping: ping::Behavior,
   reqres: reqres::Behavior,
   gossip: gossip::Behavior,
@@ -147,43 +148,43 @@ impl Libp2p {
         .continually_run(dial_task_def, vec![]),
     );
 
-    // Define the Validators object used for validating new connections
-    let connection_validators = UpdateValidatorsTask::spawn(serai.clone());
-    let new_only_validators = |noise_keypair: &identity::Keypair| -> Result<_, ()> {
-      Ok(OnlyValidators {
-        serai_key: serai_key.clone(),
-        validators: connection_validators.clone(),
-        noise_keypair: noise_keypair.clone(),
-      })
+    let swarm = {
+      let new_only_validators = |noise_keypair: &identity::Keypair| -> Result<_, ()> {
+        Ok(OnlyValidators { serai_key: serai_key.clone(), noise_keypair: noise_keypair.clone() })
+      };
+
+      let new_yamux = || {
+        let mut config = yamux::Config::default();
+        // 1 MiB default + max message size
+        config.set_max_buffer_size((1024 * 1024) + MAX_LIBP2P_MESSAGE_SIZE);
+        // 256 KiB default + max message size
+        config
+          .set_receive_window_size(((256 * 1024) + MAX_LIBP2P_MESSAGE_SIZE).try_into().unwrap());
+        config
+      };
+
+      let mut swarm = SwarmBuilder::with_existing_identity(identity::Keypair::generate_ed25519())
+        .with_tokio()
+        .with_tcp(TcpConfig::default().nodelay(false), new_only_validators, new_yamux)
+        .unwrap()
+        .with_behaviour(|_| Behavior {
+          allow_list: allow_block_list::Behaviour::default(),
+          ping: ping::new_behavior(),
+          reqres: reqres::new_behavior(),
+          gossip: gossip::new_behavior(),
+        })
+        .unwrap()
+        .with_swarm_config(|config| {
+          config
+            .with_idle_connection_timeout(ping::INTERVAL + ping::TIMEOUT + Duration::from_secs(5))
+        })
+        .build();
+      swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{PORT}").parse().unwrap()).unwrap();
+      swarm.listen_on(format!("/ip6/::/tcp/{PORT}").parse().unwrap()).unwrap();
+      swarm
     };
 
-    let new_yamux = || {
-      let mut config = yamux::Config::default();
-      // 1 MiB default + max message size
-      config.set_max_buffer_size((1024 * 1024) + MAX_LIBP2P_MESSAGE_SIZE);
-      // 256 KiB default + max message size
-      config.set_receive_window_size(((256 * 1024) + MAX_LIBP2P_MESSAGE_SIZE).try_into().unwrap());
-      config
-    };
-
-    let mut swarm = SwarmBuilder::with_existing_identity(identity::Keypair::generate_ed25519())
-      .with_tokio()
-      .with_tcp(TcpConfig::default().nodelay(false), new_only_validators, new_yamux)
-      .unwrap()
-      .with_behaviour(|_| Behavior {
-        ping: ping::new_behavior(),
-        reqres: reqres::new_behavior(),
-        gossip: gossip::new_behavior(),
-      })
-      .unwrap()
-      .with_swarm_config(|config| {
-        config.with_idle_connection_timeout(ping::INTERVAL + ping::TIMEOUT + Duration::from_secs(5))
-      })
-      .build();
-    swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{PORT}").parse().unwrap()).unwrap();
-    swarm.listen_on(format!("/ip6/::/tcp/{PORT}").parse().unwrap()).unwrap();
-
-    let swarm_validators = UpdateValidatorsTask::spawn(serai);
+    let (swarm_validators, validator_changes) = UpdateValidatorsTask::spawn(serai);
 
     let (gossip_send, gossip_recv) = mpsc::unbounded_channel();
     let (signed_cosigns_send, signed_cosigns_recv) = mpsc::unbounded_channel();
@@ -201,6 +202,7 @@ impl Libp2p {
       dial_task,
       to_dial_recv,
       swarm_validators,
+      validator_changes,
       peers.clone(),
       swarm,
       gossip_recv,

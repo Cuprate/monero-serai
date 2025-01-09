@@ -11,9 +11,14 @@ use serai_task::{Task, ContinuallyRan};
 use libp2p::PeerId;
 
 use futures_util::stream::{StreamExt, FuturesUnordered};
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 
 use crate::p2p::libp2p::peer_id_from_public;
+
+pub(crate) struct Changes {
+  pub(crate) removed: HashSet<PeerId>,
+  pub(crate) added: HashSet<PeerId>,
+}
 
 pub(crate) struct Validators {
   serai: Serai,
@@ -24,16 +29,22 @@ pub(crate) struct Validators {
   by_network: HashMap<NetworkId, HashSet<PeerId>>,
   // The validators and their networks
   validators: HashMap<PeerId, HashSet<NetworkId>>,
+
+  // The channel to send the changes down
+  changes: mpsc::UnboundedSender<Changes>,
 }
 
 impl Validators {
-  pub(crate) fn new(serai: Serai) -> Self {
-    Validators {
+  pub(crate) fn new(serai: Serai) -> (Self, mpsc::UnboundedReceiver<Changes>) {
+    let (send, recv) = mpsc::unbounded_channel();
+    let validators = Validators {
       serai,
       sessions: HashMap::new(),
       by_network: HashMap::new(),
       validators: HashMap::new(),
-    }
+      changes: send,
+    };
+    (validators, recv)
   }
 
   async fn session_changes(
@@ -89,6 +100,9 @@ impl Validators {
     &mut self,
     session_changes: Vec<(NetworkId, Session, HashSet<PeerId>)>,
   ) {
+    let mut removed = HashSet::new();
+    let mut added = HashSet::new();
+
     for (network, session, validators) in session_changes {
       // Remove the existing validators
       for validator in self.by_network.remove(&network).unwrap_or_else(HashSet::new) {
@@ -96,21 +110,31 @@ impl Validators {
         let mut networks = self.validators.remove(&validator).unwrap();
         // Remove this one
         networks.remove(&network);
-        // Insert the networks back if the validator was present in other networks
         if !networks.is_empty() {
+          // Insert the networks back if the validator was present in other networks
           self.validators.insert(validator, networks);
+        } else {
+          // Because this validator is no longer present in any network, mark them as removed
+          removed.insert(validator);
         }
       }
 
       // Add the new validators
       for validator in validators.iter().copied() {
         self.validators.entry(validator).or_insert_with(HashSet::new).insert(network);
+        added.insert(validator);
       }
       self.by_network.insert(network, validators);
 
       // Update the session we have populated
       self.sessions.insert(network, session);
     }
+
+    // Only flag validators for removal if they weren't simultaneously added by these changes
+    removed.retain(|validator| !added.contains(validator));
+    // Send the changes, dropping the error
+    // This lets the caller opt-out of change notifications by dropping the receiver
+    let _: Result<_, _> = self.changes.send(Changes { removed, added });
   }
 
   /// Update the view of the validators.
@@ -145,9 +169,10 @@ impl UpdateValidatorsTask {
   /// Spawn a new instance of the UpdateValidatorsTask.
   ///
   /// This returns a reference to the Validators it updates after spawning itself.
-  pub(crate) fn spawn(serai: Serai) -> Arc<RwLock<Validators>> {
+  pub(crate) fn spawn(serai: Serai) -> (Arc<RwLock<Validators>>, mpsc::UnboundedReceiver<Changes>) {
     // The validators which will be updated
-    let validators = Arc::new(RwLock::new(Validators::new(serai)));
+    let (validators, changes) = Validators::new(serai);
+    let validators = Arc::new(RwLock::new(validators));
 
     // Define the task
     let (update_validators_task, update_validators_task_handle) = Task::new();
@@ -159,7 +184,7 @@ impl UpdateValidatorsTask {
     );
 
     // Return the validators
-    validators
+    (validators, changes)
   }
 }
 

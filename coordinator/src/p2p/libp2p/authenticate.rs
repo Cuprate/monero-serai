@@ -19,13 +19,12 @@ use libp2p::{
   noise,
 };
 
-use crate::p2p::libp2p::{validators::Validators, peer_id_from_public};
+use crate::p2p::libp2p::peer_id_from_public;
 
 const PROTOCOL: &str = "/serai/coordinator/validators";
 
 #[derive(Clone)]
 pub(crate) struct OnlyValidators {
-  pub(crate) validators: Arc<RwLock<Validators>>,
   pub(crate) serai_key: Zeroizing<Keypair>,
   pub(crate) noise_keypair: identity::Keypair,
 }
@@ -108,12 +107,7 @@ impl OnlyValidators {
       .verify_simple(PROTOCOL.as_bytes(), &msg, &sig)
       .map_err(|_| io::Error::other("invalid signature"))?;
 
-    let peer_id = peer_id_from_public(Public::from_raw(public_key.to_bytes()));
-    if !self.validators.read().await.contains(&peer_id) {
-      Err(io::Error::other("peer which tried to connect isn't a known active validator"))?;
-    }
-
-    Ok(peer_id)
+    Ok(peer_id_from_public(Public::from_raw(public_key.to_bytes())))
   }
 }
 

@@ -37,7 +37,7 @@ pub(crate) struct DialTask {
 
 impl DialTask {
   pub(crate) fn new(serai: Serai, peers: Peers, to_dial: mpsc::UnboundedSender<DialOpts>) -> Self {
-    DialTask { serai: serai.clone(), validators: Validators::new(serai), peers, to_dial }
+    DialTask { serai: serai.clone(), validators: Validators::new(serai).0, peers, to_dial }
   }
 }
 

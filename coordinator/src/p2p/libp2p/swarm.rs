@@ -23,7 +23,7 @@ use libp2p::{
 
 use crate::p2p::libp2p::{
   Peers, BehaviorEvent, Behavior,
-  validators::Validators,
+  validators::{self, Validators},
   ping,
   reqres::{self, Request, Response},
   gossip,
@@ -52,6 +52,7 @@ pub(crate) struct SwarmTask {
   last_dial_task_run: Instant,
 
   validators: Arc<RwLock<Validators>>,
+  validator_changes: mpsc::UnboundedReceiver<validators::Changes>,
   peers: Peers,
   rebuild_peers_at: Instant,
 
@@ -135,6 +136,18 @@ impl SwarmTask {
       let time_till_rebuild_peers = self.rebuild_peers_at.saturating_duration_since(Instant::now());
 
       tokio::select! {
+        // If the validators have changed, update the allow list
+        validator_changes = self.validator_changes.recv() => {
+          let validator_changes = validator_changes.expect("validators update task shut down?");
+          let behavior = &mut self.swarm.behaviour_mut().allow_list;
+          for removed in validator_changes.removed {
+            behavior.disallow_peer(removed);
+          }
+          for added in validator_changes.added {
+            behavior.allow_peer(added);
+          }
+        }
+
         // Dial peers we're instructed to
         dial_opts = self.to_dial.recv() => {
           let dial_opts = dial_opts.expect("DialTask was closed?");
@@ -155,26 +168,15 @@ impl SwarmTask {
           let validators_by_network = self.validators.read().await.by_network().clone();
           let connected_peers = self.swarm.connected_peers().copied().collect::<HashSet<_>>();
 
-          // We initially populate the list of peers to disconnect with all peers
-          let mut to_disconnect = connected_peers.clone();
-
           // Build the new peers object
           let mut peers = HashMap::new();
           for (network, validators) in validators_by_network {
             peers.insert(network, validators.intersection(&connected_peers).copied().collect());
-
-            // If this peer is in this validator set, don't keep it flagged for disconnection
-            to_disconnect.retain(|peer| !validators.contains(peer));
           }
 
           // Write the new peers object
           *self.peers.peers.write().await = peers;
           self.rebuild_peers_at = Instant::now() + TIME_BETWEEN_REBUILD_PEERS;
-
-          // Disconnect all peers marked for disconnection
-          for peer in to_disconnect {
-            let _: Result<_, _> = self.swarm.disconnect_peer_id(peer);
-          }
         }
 
         // Handle swarm events
@@ -223,6 +225,10 @@ impl SwarmTask {
               }
             }
 
+            SwarmEvent::Behaviour(BehaviorEvent::AllowList(event)) => {
+              // Ensure this is an unreachable case, not an actual event
+              let _: void::Void = event;
+            }
             SwarmEvent::Behaviour(
               BehaviorEvent::Ping(ping::Event { peer: _, connection, result, })
             ) => {
@@ -305,6 +311,7 @@ impl SwarmTask {
     to_dial: mpsc::UnboundedReceiver<DialOpts>,
 
     validators: Arc<RwLock<Validators>>,
+    validator_changes: mpsc::UnboundedReceiver<validators::Changes>,
     peers: Peers,
 
     swarm: Swarm<Behavior>,
@@ -326,6 +333,7 @@ impl SwarmTask {
         last_dial_task_run: Instant::now(),
 
         validators,
+        validator_changes,
         peers,
         rebuild_peers_at: Instant::now() + TIME_BETWEEN_REBUILD_PEERS,
 
