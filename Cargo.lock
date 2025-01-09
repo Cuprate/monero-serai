@@ -8339,6 +8339,7 @@ dependencies = [
  "sp-runtime",
  "tokio",
  "tributary-chain",
+ "void",
  "zalloc",
  "zeroize",
 ]

@@ -5,8 +5,8 @@ use blake2::{Digest, Blake2s256};
 use borsh::{BorshSerialize, BorshDeserialize};
 
 use libp2p::gossipsub::{
-  TopicHash, IdentTopic, MessageId, MessageAuthenticity, ValidationMode, ConfigBuilder,
-  IdentityTransform, AllowAllSubscriptionFilter, Behaviour,
+  IdentTopic, MessageId, MessageAuthenticity, ValidationMode, ConfigBuilder, IdentityTransform,
+  AllowAllSubscriptionFilter, Behaviour,
 };
 pub use libp2p::gossipsub::Event;
 

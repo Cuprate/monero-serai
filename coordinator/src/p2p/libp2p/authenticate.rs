@@ -1,5 +1,5 @@
 use core::{pin::Pin, future::Future};
-use std::{sync::Arc, io};
+use std::io;
 
 use zeroize::Zeroizing;
 use rand_core::{RngCore, OsRng};
@@ -8,8 +8,6 @@ use blake2::{Digest, Blake2s256};
 use schnorrkel::{Keypair, PublicKey, Signature};
 
 use serai_client::primitives::PublicKey as Public;
-
-use tokio::sync::RwLock;
 
 use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use libp2p::{

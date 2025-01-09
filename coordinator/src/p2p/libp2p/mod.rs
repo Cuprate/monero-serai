@@ -26,6 +26,7 @@ use libp2p::{
   identity::{self, PeerId},
   tcp::Config as TcpConfig,
   yamux, allow_block_list,
+  connection_limits::{self, ConnectionLimits},
   swarm::NetworkBehaviour,
   SwarmBuilder,
 };
@@ -39,10 +40,6 @@ use validators::UpdateValidatorsTask;
 /// The authentication protocol upgrade to limit the P2P network to active validators.
 mod authenticate;
 use authenticate::OnlyValidators;
-
-/// The dial task, to find new peers to connect to
-mod dial;
-use dial::DialTask;
 
 /// The ping behavior, used to ensure connection latency is below the limit
 mod ping;
@@ -58,6 +55,10 @@ use gossip::Message;
 /// The swarm task, running it and dispatching to/from it
 mod swarm;
 use swarm::SwarmTask;
+
+/// The dial task, to find new peers to connect to
+mod dial;
+use dial::DialTask;
 
 const PORT: u16 = 30563; // 5132 ^ (('c' << 8) | 'o')
 
@@ -113,6 +114,7 @@ struct Peers {
 #[derive(NetworkBehaviour)]
 struct Behavior {
   allow_list: allow_block_list::Behaviour<allow_block_list::AllowedPeers>,
+  connection_limits: connection_limits::Behaviour,
   ping: ping::Behavior,
   reqres: reqres::Behavior,
   gossip: gossip::Behavior,
@@ -169,6 +171,10 @@ impl Libp2p {
         .unwrap()
         .with_behaviour(|_| Behavior {
           allow_list: allow_block_list::Behaviour::default(),
+          // Limit each per to a single connection
+          connection_limits: connection_limits::Behaviour::new(
+            ConnectionLimits::default().with_max_established_per_peer(Some(1)),
+          ),
           ping: ping::new_behavior(),
           reqres: reqres::new_behavior(),
           gossip: gossip::new_behavior(),

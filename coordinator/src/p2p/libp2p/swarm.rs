@@ -225,8 +225,10 @@ impl SwarmTask {
               }
             }
 
-            SwarmEvent::Behaviour(BehaviorEvent::AllowList(event)) => {
-              // Ensure this is an unreachable case, not an actual event
+            SwarmEvent::Behaviour(
+              BehaviorEvent::AllowList(event) | BehaviorEvent::ConnectionLimits(event)
+            ) => {
+              // Ensure these are unreachable cases, not actual events
               let _: void::Void = event;
             }
             SwarmEvent::Behaviour(
