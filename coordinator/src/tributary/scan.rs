@@ -1,4 +1,4 @@
-use core::future::Future;
+use core::{marker::PhantomData, future::Future};
 use std::collections::HashMap;
 
 use ciphersuite::group::GroupEncoding;
@@ -22,20 +22,27 @@ use serai_task::ContinuallyRan;
 
 use messages::sign::VariantSignId;
 
-use crate::tributary::{
-  db::*,
-  transaction::{SigningProtocolRound, Signed, Transaction},
+use serai_cosign::Cosigning;
+
+use crate::{
+  p2p::P2p,
+  tributary::{
+    db::*,
+    transaction::{SigningProtocolRound, Signed, Transaction},
+  },
 };
 
-struct ScanBlock<'a, D: DbTxn, TD: Db> {
-  txn: &'a mut D,
+struct ScanBlock<'a, D: Db, DT: DbTxn, TD: Db, P: P2p> {
+  _db: PhantomData<D>,
+  _p2p: PhantomData<P>,
+  txn: &'a mut DT,
   set: ValidatorSet,
   validators: &'a [SeraiAddress],
   total_weight: u64,
   validator_weights: &'a HashMap<SeraiAddress, u64>,
   tributary: &'a TributaryReader<TD, Transaction>,
 }
-impl<'a, D: DbTxn, TD: Db> ScanBlock<'a, D, TD> {
+impl<'a, D: Db, DT: DbTxn, TD: Db, P: P2p> ScanBlock<'a, D, DT, TD, P> {
   fn potentially_start_cosign(&mut self) {
     // Don't start a new cosigning instance if we're actively running one
     if TributaryDb::actively_cosigning(self.txn, self.set) {
@@ -49,7 +56,11 @@ impl<'a, D: DbTxn, TD: Db> ScanBlock<'a, D, TD> {
       return;
     };
 
-    let substrate_block_number = todo!("TODO");
+    let Some(substrate_block_number) =
+      Cosigning::<D>::finalized_block_number(self.txn, latest_substrate_block_to_cosign)
+    else {
+      panic!("cosigning a block our cosigner didn't index")
+    };
 
     // Mark us as actively cosigning
     TributaryDb::start_cosigning(self.txn, self.set, substrate_block_number);
@@ -320,12 +331,11 @@ impl<'a, D: DbTxn, TD: Db> ScanBlock<'a, D, TD> {
             Evidence::ConflictingMessages(first, second) => (first, Some(second)),
             Evidence::InvalidPrecommit(first) | Evidence::InvalidValidRound(first) => (first, None),
           };
-          /* TODO
           let msgs = (
-            decode_signed_message::<TendermintNetwork<D, Transaction, P>>(&data.0).unwrap(),
+            decode_signed_message::<TendermintNetwork<TD, Transaction, P>>(&data.0).unwrap(),
             if data.1.is_some() {
               Some(
-                decode_signed_message::<TendermintNetwork<D, Transaction, P>>(&data.1.unwrap())
+                decode_signed_message::<TendermintNetwork<TD, Transaction, P>>(&data.1.unwrap())
                   .unwrap(),
               )
             } else {
@@ -336,9 +346,11 @@ impl<'a, D: DbTxn, TD: Db> ScanBlock<'a, D, TD> {
           // Since anything with evidence is fundamentally faulty behavior, not just temporal
           // errors, mark the node as fatally slashed
           TributaryDb::fatal_slash(
-            self.txn, msgs.0.msg.sender, &format!("invalid tendermint messages: {msgs:?}"));
-          */
-          todo!("TODO")
+            self.txn,
+            self.set,
+            SeraiAddress(msgs.0.msg.sender),
+            &format!("invalid tendermint messages: {msgs:?}"),
+          );
         }
         TributaryTransaction::Application(tx) => {
           self.handle_application_tx(block_number, tx);
@@ -348,15 +360,16 @@ impl<'a, D: DbTxn, TD: Db> ScanBlock<'a, D, TD> {
   }
 }
 
-struct ScanTributaryTask<D: Db, TD: Db> {
+struct ScanTributaryTask<D: Db, TD: Db, P: P2p> {
   db: D,
   set: ValidatorSet,
   validators: Vec<SeraiAddress>,
   total_weight: u64,
   validator_weights: HashMap<SeraiAddress, u64>,
   tributary: TributaryReader<TD, Transaction>,
+  _p2p: PhantomData<P>,
 }
-impl<D: Db, TD: Db> ContinuallyRan for ScanTributaryTask<D, TD> {
+impl<D: Db, TD: Db, P: P2p> ContinuallyRan for ScanTributaryTask<D, TD, P> {
   fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
     async move {
       let (mut last_block_number, mut last_block_hash) =
@@ -386,6 +399,8 @@ impl<D: Db, TD: Db> ContinuallyRan for ScanTributaryTask<D, TD> {
 
         let mut txn = self.db.txn();
         (ScanBlock {
+          _db: PhantomData::<D>,
+          _p2p: PhantomData::<P>,
           txn: &mut txn,
           set: self.set,
           validators: &self.validators,
