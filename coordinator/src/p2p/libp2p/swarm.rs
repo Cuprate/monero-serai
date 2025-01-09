@@ -61,7 +61,7 @@ pub(crate) struct SwarmTask {
 
   gossip: mpsc::UnboundedReceiver<gossip::Message>,
   signed_cosigns: mpsc::UnboundedSender<SignedCosign>,
-  tributary_gossip: mpsc::UnboundedSender<(ValidatorSet, Vec<u8>)>,
+  tributary_gossip: mpsc::UnboundedSender<([u8; 32], Vec<u8>)>,
 
   outbound_requests: mpsc::UnboundedReceiver<(PeerId, Request, oneshot::Sender<Response>)>,
   outbound_request_responses: HashMap<RequestId, oneshot::Sender<Response>>,
@@ -82,12 +82,13 @@ impl SwarmTask {
     match event {
       gossip::Event::Message { message, .. } => {
         let Ok(message) = gossip::Message::deserialize(&mut message.data.as_slice()) else {
-          // TODO: Penalize the PeerId which sent this message
+          // TODO: Penalize the PeerId which created this message, which requires authenticating
+          // each message OR moving to explicit acknowledgement before re-gossiping
           return;
         };
         match message {
-          gossip::Message::Tributary { set, message } => {
-            let _: Result<_, _> = self.tributary_gossip.send((set, message));
+          gossip::Message::Tributary { tributary, message } => {
+            let _: Result<_, _> = self.tributary_gossip.send((tributary, message));
           }
           gossip::Message::Cosign(signed_cosign) => {
             let _: Result<_, _> = self.signed_cosigns.send(signed_cosign);
@@ -296,7 +297,7 @@ impl SwarmTask {
 
     gossip: mpsc::UnboundedReceiver<gossip::Message>,
     signed_cosigns: mpsc::UnboundedSender<SignedCosign>,
-    tributary_gossip: mpsc::UnboundedSender<(ValidatorSet, Vec<u8>)>,
+    tributary_gossip: mpsc::UnboundedSender<([u8; 32], Vec<u8>)>,
 
     outbound_requests: mpsc::UnboundedReceiver<(PeerId, Request, oneshot::Sender<Response>)>,
 

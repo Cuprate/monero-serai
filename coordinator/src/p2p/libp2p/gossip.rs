@@ -2,9 +2,7 @@ use core::time::Duration;
 
 use blake2::{Digest, Blake2s256};
 
-use scale::Encode;
 use borsh::{BorshSerialize, BorshDeserialize};
-use serai_client::validator_sets::primitives::ValidatorSet;
 
 use libp2p::gossipsub::{
   TopicHash, IdentTopic, MessageId, MessageAuthenticity, ValidationMode, ConfigBuilder,
@@ -22,20 +20,20 @@ const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(80);
 const LIBP2P_PROTOCOL: &str = "/serai/coordinator/gossip/1.0.0";
 const BASE_TOPIC: &str = "/";
 
-fn topic_for_set(set: ValidatorSet) -> IdentTopic {
-  IdentTopic::new(format!("/set/{}", hex::encode(set.encode())))
+fn topic_for_tributary(tributary: [u8; 32]) -> IdentTopic {
+  IdentTopic::new(format!("/tributary/{}", hex::encode(tributary)))
 }
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub(crate) enum Message {
-  Tributary { set: ValidatorSet, message: Vec<u8> },
+  Tributary { tributary: [u8; 32], message: Vec<u8> },
   Cosign(SignedCosign),
 }
 
 impl Message {
   pub(crate) fn topic(&self) -> TopicHash {
     match self {
-      Message::Tributary { set, .. } => topic_for_set(*set).hash(),
+      Message::Tributary { tributary, .. } => topic_for_tributary(*tributary).hash(),
       Message::Cosign(_) => IdentTopic::new(BASE_TOPIC).hash(),
     }
   }

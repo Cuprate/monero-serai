@@ -11,7 +11,7 @@ use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use libp2p::request_response::{
   self, Codec as CodecTrait, Event as GenericEvent, Config, Behaviour, ProtocolSupport,
 };
-pub use request_response::Message;
+pub use request_response::{RequestId, Message};
 
 use serai_cosign::SignedCosign;
 
