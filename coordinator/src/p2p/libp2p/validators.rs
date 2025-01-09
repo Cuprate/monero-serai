@@ -115,6 +115,15 @@ impl Validators {
           self.validators.insert(validator, networks);
         } else {
           // Because this validator is no longer present in any network, mark them as removed
+          /*
+            This isn't accurate. The validator isn't present in the latest session for this
+            network. The validator was present in the prior session which has yet to retire. Our
+            lack of explicit inclusion for both the prior session and the current session causes
+            only the validators mutually present in both sessions to be responsible for all actions
+            still ongoing as the prior validator set retires.
+
+            TODO: Fix this
+          */
           removed.insert(validator);
         }
       }
