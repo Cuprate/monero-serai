@@ -35,7 +35,7 @@ use libp2p::{
   SwarmBuilder,
 };
 
-use serai_coordinator_p2p::TributaryBlockWithCommit;
+use serai_coordinator_p2p::{Heartbeat, TributaryBlockWithCommit};
 
 /// A struct to sync the validators from the Serai node in order to keep track of them.
 mod validators;
@@ -88,13 +88,12 @@ pub struct Peer<'a> {
 impl serai_coordinator_p2p::Peer<'_> for Peer<'_> {
   fn send_heartbeat(
     &self,
-    set: ValidatorSet,
-    latest_block_hash: [u8; 32],
+    heartbeat: Heartbeat,
   ) -> impl Send + Future<Output = Option<Vec<TributaryBlockWithCommit>>> {
     async move {
       const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
 
-      let request = Request::Heartbeat { set, latest_block_hash };
+      let request = Request::Heartbeat(heartbeat);
       let (sender, receiver) = oneshot::channel();
       self
         .outbound_requests
@@ -341,9 +340,7 @@ impl serai_coordinator_p2p::P2p for Libp2p {
 
   fn heartbeat(
     &self,
-  ) -> impl Send
-       + Future<Output = (ValidatorSet, [u8; 32], oneshot::Sender<Vec<TributaryBlockWithCommit>>)>
-  {
+  ) -> impl Send + Future<Output = (Heartbeat, oneshot::Sender<Vec<TributaryBlockWithCommit>>)> {
     async move {
       let (request_id, set, latest_block_hash) = self
         .heartbeat_requests
@@ -357,16 +354,19 @@ impl serai_coordinator_p2p::P2p for Libp2p {
         let respond = self.inbound_request_responses.clone();
         async move {
           // The swarm task expects us to respond to every request. If the caller drops this
-          // channel, we'll receive `Err` and respond with `None`, safely satisfying that bound
+          // channel, we'll receive `Err` and respond with `vec![]`, safely satisfying that bound
           // without requiring the caller send a value down this channel
-          let response =
-            if let Ok(blocks) = receiver.await { Response::Blocks(blocks) } else { Response::None };
+          let response = if let Ok(blocks) = receiver.await {
+            Response::Blocks(blocks)
+          } else {
+            Response::Blocks(vec![])
+          };
           respond
             .send((request_id, response))
             .expect("inbound_request_responses_recv was dropped?");
         }
       });
-      (set, latest_block_hash, sender)
+      (Heartbeat { set, latest_block_hash }, sender)
     }
   }
 
@@ -388,7 +388,7 @@ impl serai_coordinator_p2p::P2p for Libp2p {
           let response = if let Ok(notable_cosigns) = receiver.await {
             Response::NotableCosigns(notable_cosigns)
           } else {
-            Response::None
+            Response::NotableCosigns(vec![])
           };
           respond
             .send((request_id, response))

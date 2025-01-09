@@ -15,6 +15,15 @@ use serai_cosign::SignedCosign;
 /// The heartbeat task, effecting sync of Tributaries
 pub mod heartbeat;
 
+/// A heartbeat for a Tributary.
+#[derive(Clone, Copy, BorshSerialize, BorshDeserialize, Debug)]
+pub struct Heartbeat {
+  /// The Tributary this is the heartbeat of.
+  pub set: ValidatorSet,
+  /// The hash of the latest block added to the Tributary.
+  pub latest_block_hash: [u8; 32],
+}
+
 /// A tributary block and its commit.
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub struct TributaryBlockWithCommit {
@@ -29,8 +38,7 @@ pub trait Peer<'a>: Send {
   /// Send a heartbeat to this peer.
   fn send_heartbeat(
     &self,
-    set: ValidatorSet,
-    latest_block_hash: [u8; 32],
+    heartbeat: Heartbeat,
   ) -> impl Send + Future<Output = Option<Vec<TributaryBlockWithCommit>>>;
 }
 
@@ -48,8 +56,7 @@ pub trait P2p: Send + Sync + Clone + tributary::P2p + serai_cosign::RequestNotab
   /// descending blocks.
   fn heartbeat(
     &self,
-  ) -> impl Send
-       + Future<Output = (ValidatorSet, [u8; 32], oneshot::Sender<Vec<TributaryBlockWithCommit>>)>;
+  ) -> impl Send + Future<Output = (Heartbeat, oneshot::Sender<Vec<TributaryBlockWithCommit>>)>;
 
   /// A cancel-safe future for the next request for the notable cosigns of a gloabl session.
   ///

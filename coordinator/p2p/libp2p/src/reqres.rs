@@ -4,7 +4,6 @@ use std::io;
 use async_trait::async_trait;
 
 use borsh::{BorshSerialize, BorshDeserialize};
-use serai_client::validator_sets::primitives::ValidatorSet;
 
 use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -15,7 +14,7 @@ pub use request_response::{RequestId, Message};
 
 use serai_cosign::SignedCosign;
 
-use serai_coordinator_p2p::TributaryBlockWithCommit;
+use serai_coordinator_p2p::{Heartbeat, TributaryBlockWithCommit};
 
 /// The maximum message size for the request-response protocol
 // This is derived from the heartbeat message size as it's our largest message
@@ -31,7 +30,7 @@ pub(crate) enum Request {
   /// intervals.
   ///
   /// If our peers have more blocks than us, they're expected to respond with those blocks.
-  Heartbeat { set: ValidatorSet, latest_block_hash: [u8; 32] },
+  Heartbeat(Heartbeat),
   /// A request for the notable cosigns for a global session.
   NotableCosigns { global_session: [u8; 32] },
 }

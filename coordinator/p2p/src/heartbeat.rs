@@ -10,7 +10,7 @@ use tributary::{ReadWrite, TransactionTrait, Block, Tributary, TributaryReader};
 use serai_db::*;
 use serai_task::ContinuallyRan;
 
-use crate::{Peer, P2p};
+use crate::{Heartbeat, Peer, P2p};
 
 // Amount of blocks in a minute
 const BLOCKS_PER_MINUTE: usize = (60 / (tributary::tendermint::TARGET_BLOCK_TIME / 1000)) as usize;
@@ -70,7 +70,11 @@ impl<TD: Db, Tx: TransactionTrait, P: P2p> ContinuallyRan for HeartbeatTask<TD, 
               tip_is_stale = false;
             }
             // Necessary due to https://github.com/rust-lang/rust/issues/100013
-            let Some(blocks) = peer.send_heartbeat(self.set, tip).boxed().await else {
+            let Some(blocks) = peer
+              .send_heartbeat(Heartbeat { set: self.set, latest_block_hash: tip })
+              .boxed()
+              .await
+            else {
               continue 'peer;
             };
 
@@ -88,7 +92,14 @@ impl<TD: Db, Tx: TransactionTrait, P: P2p> ContinuallyRan for HeartbeatTask<TD, 
 
               // Attempt to sync the block
               if !self.tributary.sync_block(block, block_with_commit.commit).await {
-                // The block may be invalid or may simply be stale
+                // The block may be invalid or stale if we added a block elsewhere
+                if (!tip_is_stale) && (tip != self.reader.tip()) {
+                  // Since the Tributary's tip advanced on its own, return
+                  return Ok(false);
+                }
+
+                // Since this block was invalid or stale in a way non-trivial to detect, try to
+                // sync with the next peer
                 continue 'peer;
               }
 

@@ -21,6 +21,8 @@ use libp2p::{
   swarm::{dial_opts::DialOpts, SwarmEvent, Swarm},
 };
 
+use serai_coordinator_p2p::Heartbeat;
+
 use crate::{
   Peers, BehaviorEvent, Behavior,
   validators::{self, Validators},
@@ -105,7 +107,7 @@ impl SwarmTask {
     match event {
       reqres::Event::Message { message, .. } => match message {
         reqres::Message::Request { request_id, request, channel } => match request {
-          reqres::Request::Heartbeat { set, latest_block_hash } => {
+          reqres::Request::Heartbeat(Heartbeat { set, latest_block_hash }) => {
             self.inbound_request_response_channels.insert(request_id, channel);
             let _: Result<_, _> =
               self.heartbeat_requests.send((request_id, set, latest_block_hash));
