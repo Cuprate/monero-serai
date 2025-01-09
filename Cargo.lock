@@ -841,18 +841,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-channel"
-version = "2.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89b47800b0be77592da0afd425cc03468052844aff33b84e33cc696f64e77b6a"
-dependencies = [
- "concurrent-queue",
- "event-listener-strategy",
- "futures-core",
- "pin-project-lite",
-]
-
-[[package]]
 name = "async-io"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7465,7 +7453,7 @@ version = "0.10.0-dev"
 source = "git+https://github.com/serai-dex/substrate#6e3f07bf5c98a6a3ec15f2b1a46148aa8c7d737a"
 dependencies = [
  "array-bytes",
- "async-channel 1.9.0",
+ "async-channel",
  "async-trait",
  "asynchronous-codec",
  "bytes",
@@ -7506,7 +7494,7 @@ name = "sc-network-bitswap"
 version = "0.10.0-dev"
 source = "git+https://github.com/serai-dex/substrate#6e3f07bf5c98a6a3ec15f2b1a46148aa8c7d737a"
 dependencies = [
- "async-channel 1.9.0",
+ "async-channel",
  "cid",
  "futures",
  "libp2p-identity",
@@ -7563,7 +7551,7 @@ version = "0.10.0-dev"
 source = "git+https://github.com/serai-dex/substrate#6e3f07bf5c98a6a3ec15f2b1a46148aa8c7d737a"
 dependencies = [
  "array-bytes",
- "async-channel 1.9.0",
+ "async-channel",
  "futures",
  "libp2p-identity",
  "log",
@@ -7584,7 +7572,7 @@ version = "0.10.0-dev"
 source = "git+https://github.com/serai-dex/substrate#6e3f07bf5c98a6a3ec15f2b1a46148aa8c7d737a"
 dependencies = [
  "array-bytes",
- "async-channel 1.9.0",
+ "async-channel",
  "async-trait",
  "fork-tree",
  "futures",
@@ -7958,7 +7946,7 @@ name = "sc-utils"
 version = "4.0.0-dev"
 source = "git+https://github.com/serai-dex/substrate#6e3f07bf5c98a6a3ec15f2b1a46148aa8c7d737a"
 dependencies = [
- "async-channel 1.9.0",
+ "async-channel",
  "futures",
  "futures-timer",
  "lazy_static",
@@ -8384,7 +8372,6 @@ dependencies = [
 name = "serai-coordinator-p2p"
 version = "0.1.0"
 dependencies = [
- "async-channel 2.3.1",
  "borsh",
  "futures-lite",
  "log",
@@ -8392,6 +8379,7 @@ dependencies = [
  "serai-cosign",
  "serai-db",
  "serai-task",
+ "tokio",
  "tributary-chain",
 ]
 

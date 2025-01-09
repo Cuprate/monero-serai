@@ -19,7 +19,7 @@ use serai_coordinator_p2p::{Heartbeat, TributaryBlockWithCommit};
 /// The maximum message size for the request-response protocol
 // This is derived from the heartbeat message size as it's our largest message
 pub(crate) const MAX_LIBP2P_REQRES_MESSAGE_SIZE: usize =
-  (tributary::BLOCK_SIZE_LIMIT * serai_coordinator_p2p::heartbeat::BLOCKS_PER_BATCH) + 1024;
+  1024 + serai_coordinator_p2p::heartbeat::BATCH_SIZE_LIMIT;
 
 const PROTOCOL: &str = "/serai/coordinator/reqres/1.0.0";
 

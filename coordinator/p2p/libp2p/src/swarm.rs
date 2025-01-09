@@ -8,7 +8,7 @@ use borsh::BorshDeserialize;
 
 use serai_client::validator_sets::primitives::ValidatorSet;
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, oneshot, RwLock};
 
 use serai_task::TaskHandle;
 
@@ -21,7 +21,7 @@ use libp2p::{
   swarm::{dial_opts::DialOpts, SwarmEvent, Swarm},
 };
 
-use serai_coordinator_p2p::{oneshot, Heartbeat};
+use serai_coordinator_p2p::Heartbeat;
 
 use crate::{
   Peers, BehaviorEvent, Behavior,
@@ -69,11 +69,6 @@ pub(crate) struct SwarmTask {
 
   inbound_request_response_channels: HashMap<RequestId, ResponseChannel<Response>>,
   heartbeat_requests: mpsc::UnboundedSender<(RequestId, ValidatorSet, [u8; 32])>,
-  /* TODO
-    let cosigns = Cosigning::<D>::notable_cosigns(&self.db, global_session);
-    let res = reqres::Response::NotableCosigns(cosigns);
-    let _: Result<_, _> = self.swarm.behaviour_mut().reqres.send_response(channel, res);
-  */
   notable_cosign_requests: mpsc::UnboundedSender<(RequestId, [u8; 32])>,
   inbound_request_responses: mpsc::UnboundedReceiver<(RequestId, Response)>,
 }

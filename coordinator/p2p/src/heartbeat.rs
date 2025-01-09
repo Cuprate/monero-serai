@@ -1,7 +1,7 @@
 use core::future::Future;
 use std::time::{Duration, SystemTime};
 
-use serai_client::validator_sets::primitives::ValidatorSet;
+use serai_client::validator_sets::primitives::{MAX_KEY_SHARES_PER_SET, ValidatorSet};
 
 use futures_lite::FutureExt;
 
@@ -15,19 +15,32 @@ use crate::{Heartbeat, Peer, P2p};
 // Amount of blocks in a minute
 const BLOCKS_PER_MINUTE: usize = (60 / (tributary::tendermint::TARGET_BLOCK_TIME / 1000)) as usize;
 
-/// The maximum amount of blocks to include/included within a batch.
-pub const BLOCKS_PER_BATCH: usize = BLOCKS_PER_MINUTE + 1;
+/// The minimum amount of blocks to include/included within a batch, assuming there's blocks to
+/// include in the batch.
+///
+/// This decides the size limit of the Batch (the Block size limit multiplied by the minimum amount
+/// of blocks we'll send). The actual amount of blocks sent will be the amount which fits within
+/// the size limit.
+pub const MIN_BLOCKS_PER_BATCH: usize = BLOCKS_PER_MINUTE + 1;
+
+/// The size limit for a batch of blocks sent in response to a Heartbeat.
+///
+/// This estimates the size of a commit as `32 + (MAX_VALIDATORS * 128)`. At the time of writing, a
+/// commit is `8 + (validators * 32) + (32 + (validators * 32))` (for the time, list of validators,
+/// and aggregate signature). Accordingly, this should be a safe over-estimate.
+pub const BATCH_SIZE_LIMIT: usize = MIN_BLOCKS_PER_BATCH *
+  (tributary::BLOCK_SIZE_LIMIT + 32 + ((MAX_KEY_SHARES_PER_SET as usize) * 128));
 
 /// Sends a heartbeat to other validators on regular intervals informing them of our Tributary's
 /// tip.
 ///
 /// If the other validator has more blocks then we do, they're expected to inform us. This forms
 /// the sync protocol for our Tributaries.
-pub struct HeartbeatTask<TD: Db, Tx: TransactionTrait, P: P2p> {
-  set: ValidatorSet,
-  tributary: Tributary<TD, Tx, P>,
-  reader: TributaryReader<TD, Tx>,
-  p2p: P,
+pub(crate) struct HeartbeatTask<TD: Db, Tx: TransactionTrait, P: P2p> {
+  pub(crate) set: ValidatorSet,
+  pub(crate) tributary: Tributary<TD, Tx, P>,
+  pub(crate) reader: TributaryReader<TD, Tx>,
+  pub(crate) p2p: P,
 }
 
 impl<TD: Db, Tx: TransactionTrait, P: P2p> ContinuallyRan for HeartbeatTask<TD, Tx, P> {
@@ -80,7 +93,7 @@ impl<TD: Db, Tx: TransactionTrait, P: P2p> ContinuallyRan for HeartbeatTask<TD, 
 
             // This is the final batch if it has less than the maximum amount of blocks
             // (signifying there weren't more blocks after this to fill the batch with)
-            let final_batch = blocks.len() < BLOCKS_PER_BATCH;
+            let final_batch = blocks.len() < MIN_BLOCKS_PER_BATCH;
 
             // Sync each block
             for block_with_commit in blocks {
