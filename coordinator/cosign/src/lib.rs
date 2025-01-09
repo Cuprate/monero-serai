@@ -127,7 +127,8 @@ create_db! {
     // The following are populated by the intend task and used throughout the library
 
     // An index of Substrate blocks
-    SubstrateBlocks: (block_number: u64) -> [u8; 32],
+    SubstrateBlockHash: (block_number: u64) -> [u8; 32],
+    SubstrateBlockNumber: (block_hash: [u8; 32]) -> u64,
     // A mapping from a global session's ID to its relevant information.
     GlobalSessions: (global_session: [u8; 32]) -> GlobalSession,
     // The last block to be cosigned by a global session.
@@ -270,15 +271,22 @@ impl<D: Db> Cosigning<D> {
     Ok(LatestCosignedBlockNumber::get(getter).unwrap_or(0))
   }
 
-  /// Fetch an cosigned Substrate block by its block number.
+  /// Fetch a cosigned Substrate block's hash by its block number.
   pub fn cosigned_block(getter: &impl Get, block_number: u64) -> Result<Option<[u8; 32]>, Faulted> {
     if block_number > Self::latest_cosigned_block_number(getter)? {
       return Ok(None);
     }
 
     Ok(Some(
-      SubstrateBlocks::get(getter, block_number).expect("cosigned block but didn't index it"),
+      SubstrateBlockHash::get(getter, block_number).expect("cosigned block but didn't index it"),
     ))
+  }
+
+  /// Fetch a finalized block's number by its hash.
+  ///
+  /// This block is not guaranteed to be cosigned.
+  pub fn finalized_block_number(getter: &impl Get, block_hash: [u8; 32]) -> Option<u64> {
+    SubstrateBlockNumber::get(getter, block_hash)
   }
 
   /// Fetch the notable cosigns for a global session in order to respond to requests.
@@ -345,7 +353,7 @@ impl<D: Db> Cosigning<D> {
     let network = cosign.cosigner;
 
     // Check our indexed blockchain includes a block with this block number
-    let Some(our_block_hash) = SubstrateBlocks::get(&self.db, cosign.block_number) else {
+    let Some(our_block_hash) = SubstrateBlockHash::get(&self.db, cosign.block_number) else {
       return Ok(true);
     };
     let faulty = cosign.block_hash != our_block_hash;

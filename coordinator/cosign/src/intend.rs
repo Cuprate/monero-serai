@@ -78,7 +78,7 @@ impl<D: Db> ContinuallyRan for CosignIntendTask<D> {
         // Check we are indexing a linear chain
         if (block_number > 1) &&
           (<[u8; 32]>::from(block.header.parent_hash) !=
-            SubstrateBlocks::get(&txn, block_number - 1)
+            SubstrateBlockHash::get(&txn, block_number - 1)
               .expect("indexing a block but haven't indexed its parent"))
         {
           Err(format!(
@@ -86,14 +86,16 @@ impl<D: Db> ContinuallyRan for CosignIntendTask<D> {
             block_number - 1
           ))?;
         }
-        SubstrateBlocks::set(&mut txn, block_number, &block.hash());
+        let block_hash = block.hash();
+        SubstrateBlockHash::set(&mut txn, block_number, &block_hash);
+        SubstrateBlockNumber::set(&mut txn, block_hash, &block_number);
 
         let global_session_for_this_block = LatestGlobalSessionIntended::get(&txn);
 
         // If this is notable, it creates a new global session, which we index into the database
         // now
         if has_events == HasEvents::Notable {
-          let serai = self.serai.as_of(block.hash());
+          let serai = self.serai.as_of(block_hash);
           let sets_and_keys = cosigning_sets(&serai).await?;
           let global_session =
             GlobalSession::id(sets_and_keys.iter().map(|(set, _key)| *set).collect());
@@ -159,7 +161,7 @@ impl<D: Db> ContinuallyRan for CosignIntendTask<D> {
                 &CosignIntent {
                   global_session: global_session_for_this_block,
                   block_number,
-                  block_hash: block.hash(),
+                  block_hash,
                   notable: has_events == HasEvents::Notable,
                 },
               );
