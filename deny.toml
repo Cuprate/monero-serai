@@ -75,6 +75,8 @@ exceptions = [
   { allow = ["AGPL-3.0"], name = "tributary-chain" },
   { allow = ["AGPL-3.0"], name = "serai-cosign" },
   { allow = ["AGPL-3.0"], name = "serai-coordinator-substrate" },
+  { allow = ["AGPL-3.0"], name = "serai-coordinator-p2p" },
+  { allow = ["AGPL-3.0"], name = "serai-coordinator-libp2p-p2p" },
   { allow = ["AGPL-3.0"], name = "serai-coordinator" },
 
   { allow = ["AGPL-3.0"], name = "serai-coins-pallet" },

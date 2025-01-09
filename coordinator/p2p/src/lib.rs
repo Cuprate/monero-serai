@@ -1,3 +1,7 @@
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![doc = include_str!("../README.md")]
+#![deny(missing_docs)]
+
 use core::future::Future;
 
 use borsh::{BorshSerialize, BorshDeserialize};
@@ -8,20 +12,21 @@ use tokio::sync::oneshot;
 
 use serai_cosign::SignedCosign;
 
-/// The libp2p-backed P2P network
-mod libp2p;
-
 /// The heartbeat task, effecting sync of Tributaries
-mod heartbeat;
+pub mod heartbeat;
 
 /// A tributary block and its commit.
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
-pub(crate) struct TributaryBlockWithCommit {
-  pub(crate) block: Vec<u8>,
-  pub(crate) commit: Vec<u8>,
+pub struct TributaryBlockWithCommit {
+  /// The serialized block.
+  pub block: Vec<u8>,
+  /// The serialized commit.
+  pub commit: Vec<u8>,
 }
 
-trait Peer<'a>: Send {
+/// A representation of a peer.
+pub trait Peer<'a>: Send {
+  /// Send a heartbeat to this peer.
   fn send_heartbeat(
     &self,
     set: ValidatorSet,
@@ -29,7 +34,9 @@ trait Peer<'a>: Send {
   ) -> impl Send + Future<Output = Option<Vec<TributaryBlockWithCommit>>>;
 }
 
-trait P2p: Send + Sync + tributary::P2p + serai_cosign::RequestNotableCosigns {
+/// The representation of the P2P network.
+pub trait P2p: Send + Sync + Clone + tributary::P2p + serai_cosign::RequestNotableCosigns {
+  /// The representation of a peer.
   type Peer<'a>: Peer<'a>;
 
   /// Fetch the peers for this network.

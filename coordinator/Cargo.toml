@@ -18,8 +18,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 workspace = true
 
 [dependencies]
-async-trait = { version = "0.1", default-features = false }
-
 zeroize = { version = "^1.5", default-features = false, features = ["std"] }
 bitvec = { version = "1", default-features = false, features = ["std"] }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
@@ -53,12 +51,10 @@ borsh = { version = "1", default-features = false, features = ["std", "derive", 
 log = { version = "0.4", default-features = false, features = ["std"] }
 env_logger = { version = "0.10", default-features = false, features = ["humantime"] }
 
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "sync", "time", "macros"] }
-void = { version = "1", default-features = false }
-libp2p = { version = "0.52", default-features = false, features = ["tokio", "tcp", "noise", "yamux", "ping", "request-response", "gossipsub", "macros"] }
-
 serai-cosign = { path = "./cosign" }
+serai-coordinator-substrate = { path = "./substrate" }
+serai-coordinator-p2p = { path = "./p2p" }
+serai-coordinator-libp2p-p2p = { path = "./p2p/libp2p" }
 
 [dev-dependencies]
 tributary = { package = "tributary-chain", path = "./tributary", features = ["tests"] }

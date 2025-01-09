@@ -1,14 +1,6 @@
-//! A libp2p-based backend for P2p.
-//!
-//! The libp2p swarm is limited to validators from the Serai network. The swarm does not maintain
-//! any of its own peer finding/routing infrastructure, instead relying on the Serai network's
-//! connection information to dial peers. This does limit the listening peers to only the peers
-//! immediately reachable via the same IP address (despite the two distinct services), not hidden
-//! behind a NAT, yet is also quite simple and gives full control of who to connect to to us.
-//!
-//! Peers are decided via the `DialTask` which aims to maintain a target amount of peers from each
-//! external network.
-// TODO: Consider adding that infrastructure, leaving the Serai network solely for bootstrapping
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![doc = include_str!("../README.md")]
+#![deny(missing_docs)]
 
 use core::{future::Future, time::Duration};
 use std::{
@@ -43,7 +35,7 @@ use libp2p::{
   SwarmBuilder,
 };
 
-use crate::p2p::TributaryBlockWithCommit;
+use serai_coordinator_p2p::TributaryBlockWithCommit;
 
 /// A struct to sync the validators from the Serai node in order to keep track of them.
 mod validators;
@@ -88,11 +80,12 @@ fn peer_id_from_public(public: PublicKey) -> PeerId {
   PeerId::from_multihash(Multihash::wrap(0, &public.0).unwrap()).unwrap()
 }
 
-struct Peer<'a> {
+/// The representation of a peer.
+pub struct Peer<'a> {
   outbound_requests: &'a mpsc::UnboundedSender<(PeerId, Request, oneshot::Sender<Response>)>,
   id: PeerId,
 }
-impl crate::p2p::Peer<'_> for Peer<'_> {
+impl serai_coordinator_p2p::Peer<'_> for Peer<'_> {
   fn send_heartbeat(
     &self,
     set: ValidatorSet,
@@ -123,6 +116,8 @@ struct Peers {
   peers: Arc<RwLock<HashMap<NetworkId, HashSet<PeerId>>>>,
 }
 
+// Consider adding identify/kad/autonat/rendevous/(relay + dcutr). While we currently use the Serai
+// network for peers, we could use it solely for bootstrapping/as a fallback.
 #[derive(NetworkBehaviour)]
 struct Behavior {
   // Used to only allow Serai validators as peers
@@ -137,8 +132,13 @@ struct Behavior {
   gossip: gossip::Behavior,
 }
 
+/// The libp2p-backed P2P implementation.
+///
+/// The P2p trait implementation does not support backpressure and is expected to be fully
+/// utilized. Failure to poll the entire API will cause unbounded memory growth.
+#[allow(clippy::type_complexity)]
 #[derive(Clone)]
-struct Libp2p {
+pub struct Libp2p {
   peers: Peers,
 
   gossip: mpsc::UnboundedSender<Message>,
@@ -155,7 +155,10 @@ struct Libp2p {
 }
 
 impl Libp2p {
-  pub(crate) fn new(serai_key: &Zeroizing<Keypair>, serai: Serai) -> Libp2p {
+  /// Create a new libp2p-backed P2P instance.
+  ///
+  /// This will spawn all of the internal tasks necessary for functioning.
+  pub fn new(serai_key: &Zeroizing<Keypair>, serai: Serai) -> Libp2p {
     // Define the object we track peers with
     let peers = Peers { peers: Arc::new(RwLock::new(HashMap::new())) };
 
@@ -320,7 +323,7 @@ impl serai_cosign::RequestNotableCosigns for Libp2p {
   }
 }
 
-impl crate::p2p::P2p for Libp2p {
+impl serai_coordinator_p2p::P2p for Libp2p {
   type Peer<'a> = Peer<'a>;
 
   fn peers(&self, network: NetworkId) -> impl Send + Future<Output = Vec<Self::Peer<'_>>> {
@@ -353,6 +356,9 @@ impl crate::p2p::P2p for Libp2p {
       tokio::spawn({
         let respond = self.inbound_request_responses.clone();
         async move {
+          // The swarm task expects us to respond to every request. If the caller drops this
+          // channel, we'll receive `Err` and respond with `None`, safely satisfying that bound
+          // without requiring the caller send a value down this channel
           let response =
             if let Ok(blocks) = receiver.await { Response::Blocks(blocks) } else { Response::None };
           respond

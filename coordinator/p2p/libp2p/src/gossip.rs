@@ -15,8 +15,6 @@ use serai_cosign::SignedCosign;
 // Block size limit + 16 KB of space for signatures/metadata
 pub(crate) const MAX_LIBP2P_GOSSIP_MESSAGE_SIZE: usize = tributary::BLOCK_SIZE_LIMIT + 16384;
 
-const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(80);
-
 const LIBP2P_PROTOCOL: &str = "/serai/coordinator/gossip/1.0.0";
 const BASE_TOPIC: &str = "/";
 

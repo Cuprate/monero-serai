@@ -100,6 +100,8 @@ members = [
   "coordinator/tributary",
   "coordinator/cosign",
   "coordinator/substrate",
+  "coordinator/p2p",
+  "coordinator/p2p/libp2p",
   "coordinator",
 
   "substrate/primitives",

@@ -13,7 +13,7 @@ use libp2p::PeerId;
 use futures_util::stream::{StreamExt, FuturesUnordered};
 use tokio::sync::{mpsc, RwLock};
 
-use crate::p2p::libp2p::peer_id_from_public;
+use crate::peer_id_from_public;
 
 pub(crate) struct Changes {
   pub(crate) removed: HashSet<PeerId>,
@@ -155,10 +155,6 @@ impl Validators {
 
   pub(crate) fn by_network(&self) -> &HashMap<NetworkId, HashSet<PeerId>> {
     &self.by_network
-  }
-
-  pub(crate) fn contains(&self, peer_id: &PeerId) -> bool {
-    self.validators.contains_key(peer_id)
   }
 
   pub(crate) fn networks(&self, peer_id: &PeerId) -> Option<&HashSet<NetworkId>> {

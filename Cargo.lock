@@ -8311,7 +8311,6 @@ dependencies = [
 name = "serai-coordinator"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "bitvec",
  "blake2",
  "borsh",
@@ -8319,9 +8318,7 @@ dependencies = [
  "env_logger",
  "flexible-transcript",
  "frost-schnorrkel",
- "futures-util",
  "hex",
- "libp2p",
  "log",
  "modular-frost",
  "parity-scale-codec",
@@ -8329,6 +8326,9 @@ dependencies = [
  "schnorr-signatures",
  "schnorrkel",
  "serai-client",
+ "serai-coordinator-libp2p-p2p",
+ "serai-coordinator-p2p",
+ "serai-coordinator-substrate",
  "serai-cosign",
  "serai-db",
  "serai-env",
@@ -8337,11 +8337,47 @@ dependencies = [
  "serai-task",
  "sp-application-crypto",
  "sp-runtime",
+ "tributary-chain",
+ "zalloc",
+ "zeroize",
+]
+
+[[package]]
+name = "serai-coordinator-libp2p-p2p"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "blake2",
+ "borsh",
+ "futures-util",
+ "hex",
+ "libp2p",
+ "log",
+ "rand_core",
+ "schnorrkel",
+ "serai-client",
+ "serai-coordinator-p2p",
+ "serai-cosign",
+ "serai-task",
  "tokio",
  "tributary-chain",
  "void",
- "zalloc",
  "zeroize",
+]
+
+[[package]]
+name = "serai-coordinator-p2p"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "futures-util",
+ "log",
+ "serai-client",
+ "serai-cosign",
+ "serai-db",
+ "serai-task",
+ "tokio",
+ "tributary-chain",
 ]
 
 [[package]]

@@ -15,12 +15,12 @@ pub use request_response::{RequestId, Message};
 
 use serai_cosign::SignedCosign;
 
-use crate::p2p::TributaryBlockWithCommit;
+use serai_coordinator_p2p::TributaryBlockWithCommit;
 
 /// The maximum message size for the request-response protocol
 // This is derived from the heartbeat message size as it's our largest message
 pub(crate) const MAX_LIBP2P_REQRES_MESSAGE_SIZE: usize =
-  (tributary::BLOCK_SIZE_LIMIT * crate::p2p::heartbeat::BLOCKS_PER_BATCH) + 1024;
+  (tributary::BLOCK_SIZE_LIMIT * serai_coordinator_p2p::heartbeat::BLOCKS_PER_BATCH) + 1024;
 
 const PROTOCOL: &str = "/serai/coordinator/reqres/1.0.0";
 
@@ -103,7 +103,7 @@ impl CodecTrait for Codec {
   }
   async fn read_response<R: Send + Unpin + AsyncRead>(
     &mut self,
-    proto: &Self::Protocol,
+    _: &Self::Protocol,
     io: &mut R,
   ) -> io::Result<Response> {
     Self::read(io).await
@@ -118,7 +118,7 @@ impl CodecTrait for Codec {
   }
   async fn write_response<W: Send + Unpin + AsyncWrite>(
     &mut self,
-    proto: &Self::Protocol,
+    _: &Self::Protocol,
     io: &mut W,
     res: Response,
   ) -> io::Result<()> {

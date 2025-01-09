@@ -21,7 +21,7 @@ use libp2p::{
   swarm::{dial_opts::DialOpts, SwarmEvent, Swarm},
 };
 
-use crate::p2p::libp2p::{
+use crate::{
   Peers, BehaviorEvent, Behavior,
   validators::{self, Validators},
   ping,

@@ -177,6 +177,8 @@ jobs:
           cargo msrv verify --manifest-path coordinator/tributary/Cargo.toml
           cargo msrv verify --manifest-path coordinator/cosign/Cargo.toml
           cargo msrv verify --manifest-path coordinator/substrate/Cargo.toml
+          cargo msrv verify --manifest-path coordinator/p2p/Cargo.toml
+          cargo msrv verify --manifest-path coordinator/p2p/libp2p/Cargo.toml
           cargo msrv verify --manifest-path coordinator/Cargo.toml
 
   msrv-substrate:

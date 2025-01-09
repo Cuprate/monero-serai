@@ -5,20 +5,17 @@ use serai_client::validator_sets::primitives::ValidatorSet;
 
 use futures_util::FutureExt;
 
-use tributary::{ReadWrite, Block, Tributary, TributaryReader};
+use tributary::{ReadWrite, TransactionTrait, Block, Tributary, TributaryReader};
 
 use serai_db::*;
 use serai_task::ContinuallyRan;
 
-use crate::{
-  tributary::Transaction,
-  p2p::{Peer, P2p},
-};
+use crate::{Peer, P2p};
 
 // Amount of blocks in a minute
 const BLOCKS_PER_MINUTE: usize = (60 / (tributary::tendermint::TARGET_BLOCK_TIME / 1000)) as usize;
 
-// Maximum amount of blocks to send in a batch of blocks
+/// The maximum amount of blocks to include/included within a batch.
 pub const BLOCKS_PER_BATCH: usize = BLOCKS_PER_MINUTE + 1;
 
 /// Sends a heartbeat to other validators on regular intervals informing them of our Tributary's
@@ -26,14 +23,14 @@ pub const BLOCKS_PER_BATCH: usize = BLOCKS_PER_MINUTE + 1;
 ///
 /// If the other validator has more blocks then we do, they're expected to inform us. This forms
 /// the sync protocol for our Tributaries.
-struct HeartbeatTask<TD: Db, P: P2p> {
+pub struct HeartbeatTask<TD: Db, Tx: TransactionTrait, P: P2p> {
   set: ValidatorSet,
-  tributary: Tributary<TD, Transaction, P>,
-  reader: TributaryReader<TD, Transaction>,
+  tributary: Tributary<TD, Tx, P>,
+  reader: TributaryReader<TD, Tx>,
   p2p: P,
 }
 
-impl<TD: Db, P: P2p> ContinuallyRan for HeartbeatTask<TD, P> {
+impl<TD: Db, Tx: TransactionTrait, P: P2p> ContinuallyRan for HeartbeatTask<TD, Tx, P> {
   fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
     async move {
       // If our blockchain hasn't had a block in the past minute, trigger the heartbeat protocol
