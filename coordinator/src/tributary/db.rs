@@ -272,7 +272,19 @@ impl TributaryDb {
 
   pub(crate) fn start_of_block(txn: &mut impl DbTxn, set: ValidatorSet, block_number: u64) {
     for topic in Reattempt::take(txn, set, block_number).unwrap_or(vec![]) {
-      // TODO: Slash all people who preprocessed but didn't share
+      /*
+        TODO: Slash all people who preprocessed but didn't share, and add a delay to their
+        participations in future protocols. When we call accumulate, if the participant has no
+        delay, their accumulation occurs immediately. Else, the accumulation occurs after the
+        specified delay.
+
+        This means even if faulty validators are first to preprocess, they won't be selected for
+        the signing set unless there's a lack of less faulty validators available.
+
+        We need to decrease this delay upon successful partipations, and set it to the maximum upon
+        `f + 1` validators voting to fatally slash the validator in question. This won't issue the
+        fatal slash but should still be effective.
+      */
       Self::recognize_topic(txn, set, topic);
       if let Some(id) = topic.sign_id(set) {
         Self::send_message(txn, set, messages::sign::CoordinatorMessage::Reattempt { id });

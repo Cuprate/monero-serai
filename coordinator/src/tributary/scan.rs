@@ -201,7 +201,17 @@ impl<'a, D: Db, DT: DbTxn, TD: Db, P: P2p> ScanBlock<'a, D, DT, TD, P> {
           DataSet::None => {}
           DataSet::Participating(data_set) => {
             // Find the median reported slashes for this validator
-            // TODO: This lets 34% perform a fatal slash. Should that be allowed?
+            /*
+              TODO: This lets 34% perform a fatal slash. That shouldn't be allowed. We need
+              to accept slash reports for a period past the threshold, and only fatally slash if we
+              have a supermajority agree the slash should be fatal. If there isn't a supermajority,
+              but the median believe the slash should be fatal, we need to fallback to a large
+              constant.
+
+              Also, TODO, each slash point should probably be considered as
+              `MAX_KEY_SHARES_PER_SET * BLOCK_TIME` seconds of downtime. As this time crosses
+              various thresholds (1 day, 3 days, etc), a multiplier should be attached.
+            */
             let mut median_slash_report = Vec::with_capacity(self.validators.len());
             for i in 0 .. self.validators.len() {
               let mut this_validator =
