@@ -3,7 +3,7 @@
 #![deny(missing_docs)]
 
 use core::{fmt::Debug, future::Future};
-use std::collections::HashMap;
+use std::{sync::Arc, collections::HashMap};
 
 use blake2::{Digest, Blake2s256};
 
@@ -240,7 +240,7 @@ impl<D: Db> Cosigning<D> {
   /// only used once at any given time.
   pub fn spawn<R: RequestNotableCosigns>(
     db: D,
-    serai: Serai,
+    serai: Arc<Serai>,
     request: R,
     tasks_to_run_upon_cosigning: Vec<TaskHandle>,
   ) -> Self {
@@ -334,10 +334,9 @@ impl<D: Db> Cosigning<D> {
     }
   }
 
-  /// Intake a cosign from the Serai network.
+  /// Intake a cosign.
   ///
-  /// - Returns Err(_) if there was an error trying to validate the cosign and it should be retired
-  ///   later.
+  /// - Returns Err(_) if there was an error trying to validate the cosign.
   /// - Returns Ok(true) if the cosign was successfully handled or could not be handled at this
   ///   time.
   /// - Returns Ok(false) if the cosign was invalid.

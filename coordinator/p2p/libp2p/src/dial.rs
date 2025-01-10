@@ -1,5 +1,5 @@
 use core::future::Future;
-use std::collections::HashSet;
+use std::{sync::Arc, collections::HashSet};
 
 use rand_core::{RngCore, OsRng};
 
@@ -29,14 +29,18 @@ const TARGET_PEERS_PER_NETWORK: usize = 5;
 // TODO const TARGET_DIALED_PEERS_PER_NETWORK: usize = 3;
 
 pub(crate) struct DialTask {
-  serai: Serai,
+  serai: Arc<Serai>,
   validators: Validators,
   peers: Peers,
   to_dial: mpsc::UnboundedSender<DialOpts>,
 }
 
 impl DialTask {
-  pub(crate) fn new(serai: Serai, peers: Peers, to_dial: mpsc::UnboundedSender<DialOpts>) -> Self {
+  pub(crate) fn new(
+    serai: Arc<Serai>,
+    peers: Peers,
+    to_dial: mpsc::UnboundedSender<DialOpts>,
+  ) -> Self {
     DialTask { serai: serai.clone(), validators: Validators::new(serai).0, peers, to_dial }
   }
 }

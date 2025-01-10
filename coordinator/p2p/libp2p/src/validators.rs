@@ -21,7 +21,7 @@ pub(crate) struct Changes {
 }
 
 pub(crate) struct Validators {
-  serai: Serai,
+  serai: Arc<Serai>,
 
   // A cache for which session we're populated with the validators of
   sessions: HashMap<NetworkId, Session>,
@@ -35,7 +35,7 @@ pub(crate) struct Validators {
 }
 
 impl Validators {
-  pub(crate) fn new(serai: Serai) -> (Self, mpsc::UnboundedReceiver<Changes>) {
+  pub(crate) fn new(serai: Arc<Serai>) -> (Self, mpsc::UnboundedReceiver<Changes>) {
     let (send, recv) = mpsc::unbounded_channel();
     let validators = Validators {
       serai,
@@ -148,7 +148,7 @@ impl Validators {
 
   /// Update the view of the validators.
   pub(crate) async fn update(&mut self) -> Result<(), String> {
-    let session_changes = Self::session_changes(&self.serai, &self.sessions).await?;
+    let session_changes = Self::session_changes(&*self.serai, &self.sessions).await?;
     self.incorporate_session_changes(session_changes);
     Ok(())
   }
@@ -174,7 +174,9 @@ impl UpdateValidatorsTask {
   /// Spawn a new instance of the UpdateValidatorsTask.
   ///
   /// This returns a reference to the Validators it updates after spawning itself.
-  pub(crate) fn spawn(serai: Serai) -> (Arc<RwLock<Validators>>, mpsc::UnboundedReceiver<Changes>) {
+  pub(crate) fn spawn(
+    serai: Arc<Serai>,
+  ) -> (Arc<RwLock<Validators>>, mpsc::UnboundedReceiver<Changes>) {
     // The validators which will be updated
     let (validators, changes) = Validators::new(serai);
     let validators = Arc::new(RwLock::new(validators));

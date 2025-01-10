@@ -1,5 +1,5 @@
 use core::future::Future;
-use std::collections::HashMap;
+use std::{sync::Arc, collections::HashMap};
 
 use serai_client::{
   primitives::{SeraiAddress, Amount},
@@ -57,7 +57,7 @@ async fn block_has_events_justifying_a_cosign(
 /// A task to determine which blocks we should intend to cosign.
 pub(crate) struct CosignIntendTask<D: Db> {
   pub(crate) db: D,
-  pub(crate) serai: Serai,
+  pub(crate) serai: Arc<Serai>,
 }
 
 impl<D: Db> ContinuallyRan for CosignIntendTask<D> {

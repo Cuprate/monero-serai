@@ -56,6 +56,9 @@ pub trait P2p: Send + Sync + Clone + tributary::P2p + serai_cosign::RequestNotab
   /// Fetch the peers for this network.
   fn peers(&self, network: NetworkId) -> impl Send + Future<Output = Vec<Self::Peer<'_>>>;
 
+  /// Broadcast a cosign.
+  fn publish_cosign(&self, cosign: SignedCosign) -> impl Send + Future<Output = ()>;
+
   /// A cancel-safe future for the next heartbeat received over the P2P network.
   ///
   /// Yields the validator set its for, the latest block hash observed, and a channel to return the
