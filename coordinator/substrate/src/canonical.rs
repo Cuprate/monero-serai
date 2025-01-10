@@ -1,4 +1,5 @@
-use std::future::Future;
+use core::future::Future;
+use std::sync::Arc;
 
 use futures::stream::{StreamExt, FuturesOrdered};
 
@@ -20,14 +21,14 @@ create_db!(
 /// The event stream for canonical events.
 pub struct CanonicalEventStream<D: Db> {
   db: D,
-  serai: Serai,
+  serai: Arc<Serai>,
 }
 
 impl<D: Db> CanonicalEventStream<D> {
   /// Create a new canonical event stream.
   ///
   /// Only one of these may exist over the provided database.
-  pub fn new(db: D, serai: Serai) -> Self {
+  pub fn new(db: D, serai: Arc<Serai>) -> Self {
     Self { db, serai }
   }
 }

@@ -1,4 +1,5 @@
-use std::future::Future;
+use core::future::Future;
+use std::sync::Arc;
 
 use futures::stream::{StreamExt, FuturesOrdered};
 
@@ -24,7 +25,7 @@ create_db!(
 /// The event stream for ephemeral events.
 pub struct EphemeralEventStream<D: Db> {
   db: D,
-  serai: Serai,
+  serai: Arc<Serai>,
   validator: PublicKey,
 }
 
@@ -32,7 +33,7 @@ impl<D: Db> EphemeralEventStream<D> {
   /// Create a new ephemeral event stream.
   ///
   /// Only one of these may exist over the provided database.
-  pub fn new(db: D, serai: Serai, validator: PublicKey) -> Self {
+  pub fn new(db: D, serai: Arc<Serai>, validator: PublicKey) -> Self {
     Self { db, serai, validator }
   }
 }
@@ -216,7 +217,7 @@ impl<D: Db> ContinuallyRan for EphemeralEventStream<D> {
               &NewSetInformation {
                 set: *set,
                 serai_block: block.block_hash,
-                start_time: block.time,
+                declaration_time: block.time,
                 // TODO: Why do we have this as an explicit field here?
                 // Shouldn't thiis be inlined into the Processor's key gen code, where it's used?
                 threshold: ((total_weight * 2) / 3) + 1,

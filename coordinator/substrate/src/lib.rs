@@ -13,7 +13,9 @@ use serai_client::{
 use serai_db::*;
 
 mod canonical;
+pub use canonical::CanonicalEventStream;
 mod ephemeral;
+pub use ephemeral::EphemeralEventStream;
 
 fn borsh_serialize_validators<W: io::Write>(
   validators: &Vec<(PublicKey, u16)>,
@@ -32,16 +34,22 @@ fn borsh_deserialize_validators<R: io::Read>(
 /// The information for a new set.
 #[derive(Debug, BorshSerialize, BorshDeserialize)]
 pub struct NewSetInformation {
-  set: ValidatorSet,
-  serai_block: [u8; 32],
-  start_time: u64,
-  threshold: u16,
+  /// The set.
+  pub set: ValidatorSet,
+  /// The Serai block which declared it.
+  pub serai_block: [u8; 32],
+  /// The time of the block which declared it, in seconds.
+  pub declaration_time: u64,
+  /// The threshold to use.
+  pub threshold: u16,
+  /// The validators, with the amount of key shares they have.
   #[borsh(
     serialize_with = "borsh_serialize_validators",
     deserialize_with = "borsh_deserialize_validators"
   )]
-  validators: Vec<(PublicKey, u16)>,
-  evrf_public_keys: Vec<([u8; 32], Vec<u8>)>,
+  pub validators: Vec<(PublicKey, u16)>,
+  /// The eVRF public keys.
+  pub evrf_public_keys: Vec<([u8; 32], Vec<u8>)>,
 }
 
 mod _public_db {
