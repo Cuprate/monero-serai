@@ -4,7 +4,6 @@ use std::{sync::Arc, time::Instant};
 use zeroize::{Zeroize, Zeroizing};
 use rand_core::{RngCore, OsRng};
 
-use blake2::{digest::typenum::U32, Digest, Blake2s};
 use ciphersuite::{
   group::{ff::PrimeField, GroupEncoding},
   Ciphersuite, Ristretto,
@@ -12,23 +11,19 @@ use ciphersuite::{
 
 use tokio::sync::mpsc;
 
-use scale::Encode;
-use serai_client::{primitives::PublicKey, validator_sets::primitives::ValidatorSet, Serai};
+use serai_client::{primitives::PublicKey, Serai};
 use message_queue::{Service, client::MessageQueue};
-
-use tributary_sdk::Tributary;
 
 use serai_task::{Task, TaskHandle, ContinuallyRan};
 
 use serai_cosign::{SignedCosign, Cosigning};
-use serai_coordinator_substrate::{NewSetInformation, CanonicalEventStream, EphemeralEventStream};
-use serai_coordinator_tributary::{Transaction, ScanTributaryTask};
+use serai_coordinator_substrate::{CanonicalEventStream, EphemeralEventStream};
+use serai_coordinator_tributary::Transaction;
 
 mod db;
 use db::*;
 
 mod tributary;
-use tributary::ScanTributaryMessagesTask;
 
 mod substrate;
 use substrate::SubstrateTask;
@@ -102,69 +97,6 @@ fn spawn_cosigning(
       }
     }
   });
-}
-
-/// Spawn an existing Tributary.
-///
-/// This will spawn the Tributary, the Tributary scanning task, and inform the P2P network.
-async fn spawn_tributary<P: p2p::P2p>(
-  db: Db,
-  message_queue: Arc<MessageQueue>,
-  p2p: P,
-  p2p_add_tributary: &mpsc::UnboundedSender<(ValidatorSet, Tributary<Db, Transaction, P>)>,
-  set: NewSetInformation,
-  serai_key: Zeroizing<<Ristretto as Ciphersuite>::F>,
-) {
-  // Don't spawn retired Tributaries
-  if RetiredTributary::get(&db, set.set.network).map(|session| session.0) >= Some(set.set.session.0)
-  {
-    return;
-  }
-
-  let genesis = <[u8; 32]>::from(Blake2s::<U32>::digest((set.serai_block, set.set).encode()));
-
-  // Since the Serai block will be finalized, then cosigned, before we handle this, this time will
-  // be a couple of minutes stale. While the Tributary will still function with a start time in the
-  // past, the Tributary will immediately incur round timeouts. We reduce these by adding a
-  // constant delay of a couple of minutes.
-  const TRIBUTARY_START_TIME_DELAY: u64 = 120;
-  let start_time = set.declaration_time + TRIBUTARY_START_TIME_DELAY;
-
-  let mut tributary_validators = Vec::with_capacity(set.validators.len());
-  for (validator, weight) in set.validators.iter().copied() {
-    let validator_key = <Ristretto as Ciphersuite>::read_G(&mut validator.0.as_slice())
-      .expect("Serai validator had an invalid public key");
-    let weight = u64::from(weight);
-    tributary_validators.push((validator_key, weight));
-  }
-
-  let tributary_db = tributary_db(set.set);
-  let tributary =
-    Tributary::new(tributary_db.clone(), genesis, start_time, serai_key, tributary_validators, p2p)
-      .await
-      .unwrap();
-  let reader = tributary.reader();
-
-  p2p_add_tributary
-    .send((set.set, tributary.clone()))
-    .expect("p2p's add_tributary channel was closed?");
-
-  // Spawn the task to send all messages from the Tributary scanner to the message-queue
-  let (scan_tributary_messages_task_def, scan_tributary_messages_task) = Task::new();
-  tokio::spawn(
-    (ScanTributaryMessagesTask { tributary_db: tributary_db.clone(), set: set.set, message_queue })
-      .continually_run(scan_tributary_messages_task_def, vec![]),
-  );
-
-  let (scan_tributary_task_def, scan_tributary_task) = Task::new();
-  tokio::spawn(
-    ScanTributaryTask::<_, _, P>::new(db.clone(), tributary_db, &set, reader)
-      // This is the only handle for this ScanTributaryMessagesTask, so when this task is dropped,
-      // it will be too
-      .continually_run(scan_tributary_task_def, vec![scan_tributary_messages_task]),
-  );
-
-  tokio::spawn(tributary::run(db, set, tributary, scan_tributary_task));
 }
 
 #[tokio::main]
@@ -297,7 +229,7 @@ async fn main() {
 
   // Spawn all Tributaries on-disk
   for tributary in existing_tributaries_at_boot {
-    spawn_tributary(
+    crate::tributary::spawn_tributary(
       db.clone(),
       message_queue.clone(),
       p2p.clone(),

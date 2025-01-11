@@ -141,7 +141,7 @@ impl<P: P2p> ContinuallyRan for SubstrateTask<P> {
         // Now spawn the Tributary
         // If we reboot after committing the txn, but before this is called, this will be called
         // on boot
-        crate::spawn_tributary(
+        crate::tributary::spawn_tributary(
           self.db.clone(),
           self.message_queue.clone(),
           self.p2p.clone(),
