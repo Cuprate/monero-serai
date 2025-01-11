@@ -9,7 +9,7 @@ use messages::sign::{VariantSignId, SignId};
 
 use serai_db::*;
 
-use crate::tributary::transaction::SigningProtocolRound;
+use crate::transaction::SigningProtocolRound;
 
 /// A topic within the database which the group participates in
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Encode, BorshSerialize, BorshDeserialize)]
@@ -167,6 +167,9 @@ impl Topic {
   }
 }
 
+pub(crate) trait Borshy: BorshSerialize + BorshDeserialize {}
+impl<T: BorshSerialize + BorshDeserialize> Borshy for T {}
+
 /// The resulting data set from an accumulation
 pub(crate) enum DataSet<D: Borshy> {
   /// Accumulating this did not produce a data set to act on
@@ -175,9 +178,6 @@ pub(crate) enum DataSet<D: Borshy> {
   /// The data set was ready and we are participating in this event
   Participating(HashMap<SeraiAddress, D>),
 }
-
-trait Borshy: BorshSerialize + BorshDeserialize {}
-impl<T: BorshSerialize + BorshDeserialize> Borshy for T {}
 
 create_db!(
   CoordinatorTributary {
@@ -389,12 +389,12 @@ impl TributaryDb {
         // 5 minutes
         #[cfg(not(feature = "longer-reattempts"))]
         const BASE_REATTEMPT_DELAY: u32 =
-          (5u32 * 60 * 1000).div_ceil(tributary::tendermint::TARGET_BLOCK_TIME);
+          (5u32 * 60 * 1000).div_ceil(tributary_sdk::tendermint::TARGET_BLOCK_TIME);
 
         // 10 minutes, intended for latent environments like the GitHub CI
         #[cfg(feature = "longer-reattempts")]
         const BASE_REATTEMPT_DELAY: u32 =
-          (10u32 * 60 * 1000).div_ceil(tributary::tendermint::TARGET_BLOCK_TIME);
+          (10u32 * 60 * 1000).div_ceil(tributary_sdk::tendermint::TARGET_BLOCK_TIME);
 
         // Linearly scale the time for the protocol with the attempt number
         let blocks_till_reattempt = u64::from(attempt * BASE_REATTEMPT_DELAY);
@@ -445,12 +445,5 @@ impl TributaryDb {
     message: impl Into<messages::CoordinatorMessage>,
   ) {
     ProcessorMessages::send(txn, set, &message.into());
-  }
-
-  pub(crate) fn try_recv_message(
-    txn: &mut impl DbTxn,
-    set: ValidatorSet,
-  ) -> Option<messages::CoordinatorMessage> {
-    ProcessorMessages::try_recv(txn, set)
   }
 }

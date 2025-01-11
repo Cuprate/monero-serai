@@ -39,7 +39,7 @@ serai-task = { path = "../common/task", version = "0.1" }
 
 messages = { package = "serai-processor-messages", path = "../processor/messages" }
 message-queue = { package = "serai-message-queue", path = "../message-queue" }
-tributary = { package = "tributary-chain", path = "./tributary" }
+tributary-sdk = { path = "./tributary-sdk" }
 
 serai-client = { path = "../substrate/client", default-features = false, features = ["serai", "borsh"] }
 
@@ -53,10 +53,11 @@ tokio = { version = "1", default-features = false, features = ["time", "sync", "
 
 serai-cosign = { path = "./cosign" }
 serai-coordinator-substrate = { path = "./substrate" }
+serai-coordinator-tributary = { path = "./tributary" }
 serai-coordinator-p2p = { path = "./p2p" }
 serai-coordinator-libp2p-p2p = { path = "./p2p/libp2p" }
 
 [features]
-longer-reattempts = [] # TODO
+longer-reattempts = ["serai-coordinator-tributary/longer-reattempts"]
 parity-db = ["serai-db/parity-db"]
 rocksdb = ["serai-db/rocksdb"]

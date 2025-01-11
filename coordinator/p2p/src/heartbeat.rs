@@ -5,7 +5,7 @@ use serai_client::validator_sets::primitives::{MAX_KEY_SHARES_PER_SET, Validator
 
 use futures_lite::FutureExt;
 
-use tributary::{ReadWrite, TransactionTrait, Block, Tributary, TributaryReader};
+use tributary_sdk::{ReadWrite, TransactionTrait, Block, Tributary, TributaryReader};
 
 use serai_db::*;
 use serai_task::ContinuallyRan;
@@ -13,7 +13,8 @@ use serai_task::ContinuallyRan;
 use crate::{Heartbeat, Peer, P2p};
 
 // Amount of blocks in a minute
-const BLOCKS_PER_MINUTE: usize = (60 / (tributary::tendermint::TARGET_BLOCK_TIME / 1000)) as usize;
+const BLOCKS_PER_MINUTE: usize =
+  (60 / (tributary_sdk::tendermint::TARGET_BLOCK_TIME / 1000)) as usize;
 
 /// The minimum amount of blocks to include/included within a batch, assuming there's blocks to
 /// include in the batch.
@@ -29,7 +30,7 @@ pub const MIN_BLOCKS_PER_BATCH: usize = BLOCKS_PER_MINUTE + 1;
 /// commit is `8 + (validators * 32) + (32 + (validators * 32))` (for the time, list of validators,
 /// and aggregate signature). Accordingly, this should be a safe over-estimate.
 pub const BATCH_SIZE_LIMIT: usize = MIN_BLOCKS_PER_BATCH *
-  (tributary::BLOCK_SIZE_LIMIT + 32 + ((MAX_KEY_SHARES_PER_SET as usize) * 128));
+  (tributary_sdk::BLOCK_SIZE_LIMIT + 32 + ((MAX_KEY_SHARES_PER_SET as usize) * 128));
 
 /// Sends a heartbeat to other validators on regular intervals informing them of our Tributary's
 /// tip.

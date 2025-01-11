@@ -13,7 +13,7 @@ pub use libp2p::gossipsub::Event;
 use serai_cosign::SignedCosign;
 
 // Block size limit + 16 KB of space for signatures/metadata
-pub(crate) const MAX_LIBP2P_GOSSIP_MESSAGE_SIZE: usize = tributary::BLOCK_SIZE_LIMIT + 16384;
+pub(crate) const MAX_LIBP2P_GOSSIP_MESSAGE_SIZE: usize = tributary_sdk::BLOCK_SIZE_LIMIT + 16384;
 
 const LIBP2P_PROTOCOL: &str = "/serai/coordinator/gossip/1.0.0";
 const BASE_TOPIC: &str = "/";
@@ -42,9 +42,10 @@ pub(crate) type Behavior = Behaviour<IdentityTransform, AllowAllSubscriptionFilt
 pub(crate) fn new_behavior() -> Behavior {
   // The latency used by the Tendermint protocol, used here as the gossip epoch duration
   // libp2p-rs defaults to 1 second, whereas ours will be ~2
-  let heartbeat_interval = tributary::tendermint::LATENCY_TIME;
+  let heartbeat_interval = tributary_sdk::tendermint::LATENCY_TIME;
   // The amount of heartbeats which will occur within a single Tributary block
-  let heartbeats_per_block = tributary::tendermint::TARGET_BLOCK_TIME.div_ceil(heartbeat_interval);
+  let heartbeats_per_block =
+    tributary_sdk::tendermint::TARGET_BLOCK_TIME.div_ceil(heartbeat_interval);
   // libp2p-rs defaults to 5, whereas ours will be ~8
   let heartbeats_to_keep = 2 * heartbeats_per_block;
   // libp2p-rs defaults to 3 whereas ours will be ~4

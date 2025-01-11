@@ -1,5 +1,5 @@
-use core::{marker::PhantomData, ops::Deref, future::Future, time::Duration};
-use std::{sync::Arc, collections::HashMap, time::Instant};
+use core::{ops::Deref, time::Duration};
+use std::{sync::Arc, time::Instant};
 
 use zeroize::{Zeroize, Zeroizing};
 use rand_core::{RngCore, OsRng};
@@ -13,23 +13,25 @@ use ciphersuite::{
 use tokio::sync::mpsc;
 
 use scale::Encode;
-use serai_client::{
-  primitives::{PublicKey, SeraiAddress},
-  validator_sets::primitives::{Session, ValidatorSet},
-  Serai,
-};
-use message_queue::{Service, Metadata, client::MessageQueue};
+use serai_client::{primitives::PublicKey, validator_sets::primitives::ValidatorSet, Serai};
+use message_queue::{Service, client::MessageQueue};
+
+use tributary_sdk::Tributary;
 
 use serai_task::{Task, TaskHandle, ContinuallyRan};
 
 use serai_cosign::{SignedCosign, Cosigning};
 use serai_coordinator_substrate::{NewSetInformation, CanonicalEventStream, EphemeralEventStream};
+use serai_coordinator_tributary::{Transaction, ScanTributaryTask};
 
 mod db;
 use db::*;
 
 mod tributary;
-use tributary::{Transaction, ScanTributaryTask, ScanTributaryMessagesTask};
+use tributary::ScanTributaryMessagesTask;
+
+mod substrate;
+use substrate::SubstrateTask;
 
 mod p2p {
   pub use serai_coordinator_p2p::*;
@@ -43,8 +45,6 @@ mod p2p {
 #[global_allocator]
 static ALLOCATOR: zalloc::ZeroizingAlloc<std::alloc::System> =
   zalloc::ZeroizingAlloc(std::alloc::System);
-
-type Tributary<P> = ::tributary::Tributary<Db, Transaction, P>;
 
 async fn serai() -> Arc<Serai> {
   const SERAI_CONNECTION_DELAY: Duration = Duration::from_secs(10);
@@ -111,7 +111,7 @@ async fn spawn_tributary<P: p2p::P2p>(
   db: Db,
   message_queue: Arc<MessageQueue>,
   p2p: P,
-  p2p_add_tributary: &mpsc::UnboundedSender<(ValidatorSet, Tributary<P>)>,
+  p2p_add_tributary: &mpsc::UnboundedSender<(ValidatorSet, Tributary<Db, Transaction, P>)>,
   set: NewSetInformation,
   serai_key: Zeroizing<<Ristretto as Ciphersuite>::F>,
 ) {
@@ -131,18 +131,11 @@ async fn spawn_tributary<P: p2p::P2p>(
   let start_time = set.declaration_time + TRIBUTARY_START_TIME_DELAY;
 
   let mut tributary_validators = Vec::with_capacity(set.validators.len());
-  let mut validators = Vec::with_capacity(set.validators.len());
-  let mut total_weight = 0;
-  let mut validator_weights = HashMap::with_capacity(set.validators.len());
   for (validator, weight) in set.validators.iter().copied() {
     let validator_key = <Ristretto as Ciphersuite>::read_G(&mut validator.0.as_slice())
       .expect("Serai validator had an invalid public key");
-    let validator = SeraiAddress::from(validator);
     let weight = u64::from(weight);
     tributary_validators.push((validator_key, weight));
-    validators.push(validator);
-    total_weight += weight;
-    validator_weights.insert(validator, weight);
   }
 
   let tributary_db = tributary_db(set.set);
@@ -165,159 +158,13 @@ async fn spawn_tributary<P: p2p::P2p>(
 
   let (scan_tributary_task_def, scan_tributary_task) = Task::new();
   tokio::spawn(
-    (ScanTributaryTask {
-      cosign_db: db.clone(),
-      tributary_db,
-      set: set.set,
-      validators,
-      total_weight,
-      validator_weights,
-      tributary: reader,
-      _p2p: PhantomData::<P>,
-    })
-    // This is the only handle for this ScanTributaryMessagesTask, so when this task is dropped, it
-    // will be too
-    .continually_run(scan_tributary_task_def, vec![scan_tributary_messages_task]),
+    ScanTributaryTask::<_, _, P>::new(db.clone(), tributary_db, &set, reader)
+      // This is the only handle for this ScanTributaryMessagesTask, so when this task is dropped,
+      // it will be too
+      .continually_run(scan_tributary_task_def, vec![scan_tributary_messages_task]),
   );
 
   tokio::spawn(tributary::run(db, set, tributary, scan_tributary_task));
-}
-
-struct SubstrateTask<P: p2p::P2p> {
-  serai_key: Zeroizing<<Ristretto as Ciphersuite>::F>,
-  db: Db,
-  message_queue: Arc<MessageQueue>,
-  p2p: P,
-  p2p_add_tributary: mpsc::UnboundedSender<(ValidatorSet, Tributary<P>)>,
-  p2p_retire_tributary: mpsc::UnboundedSender<ValidatorSet>,
-}
-
-impl<P: p2p::P2p> ContinuallyRan for SubstrateTask<P> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
-    async move {
-      let mut made_progress = false;
-
-      // Handle the Canonical events
-      for network in serai_client::primitives::NETWORKS {
-        loop {
-          let mut txn = self.db.txn();
-          let Some(msg) = serai_coordinator_substrate::Canonical::try_recv(&mut txn, network)
-          else {
-            break;
-          };
-
-          match msg {
-            // TODO: Stop trying to confirm the DKG
-            messages::substrate::CoordinatorMessage::SetKeys { .. } => todo!("TODO"),
-            messages::substrate::CoordinatorMessage::SlashesReported { session } => {
-              let prior_retired = RetiredTributary::get(&txn, network);
-              let next_to_be_retired =
-                prior_retired.map(|session| Session(session.0 + 1)).unwrap_or(Session(0));
-              assert_eq!(session, next_to_be_retired);
-              RetiredTributary::set(&mut txn, network, &session);
-              self
-                .p2p_retire_tributary
-                .send(ValidatorSet { network, session })
-                .expect("p2p retire_tributary channel dropped?");
-            }
-            messages::substrate::CoordinatorMessage::Block { .. } => {}
-          }
-
-          let msg = messages::CoordinatorMessage::from(msg);
-          let metadata = Metadata {
-            from: Service::Coordinator,
-            to: Service::Processor(network),
-            intent: msg.intent(),
-          };
-          let msg = borsh::to_vec(&msg).unwrap();
-          // TODO: Make this fallible
-          self.message_queue.queue(metadata, msg).await;
-          txn.commit();
-          made_progress = true;
-        }
-      }
-
-      // Handle the NewSet events
-      loop {
-        let mut txn = self.db.txn();
-        let Some(new_set) = serai_coordinator_substrate::NewSet::try_recv(&mut txn) else { break };
-
-        if let Some(historic_session) = new_set.set.session.0.checked_sub(2) {
-          // We should have retired this session if we're here
-          if RetiredTributary::get(&txn, new_set.set.network).map(|session| session.0) <
-            Some(historic_session)
-          {
-            /*
-              If we haven't, it's because we're processing the NewSet event before the retiry
-              event from the Canonical event stream. This happens if the Canonical event, and
-              then the NewSet event, is fired while we're already iterating over NewSet events.
-
-              We break, dropping the txn, restoring this NewSet to the database, so we'll only
-              handle it once a future iteration of this loop handles the retiry event.
-            */
-            break;
-          }
-
-          /*
-            Queue this historical Tributary for deletion.
-
-            We explicitly don't queue this upon Tributary retire, instead here, to give time to
-            investigate retired Tributaries if questions are raised post-retiry. This gives a
-            week (the duration of the following session) after the Tributary has been retired to
-            make a backup of the data directory for any investigations.
-          */
-          TributaryCleanup::send(
-            &mut txn,
-            &ValidatorSet { network: new_set.set.network, session: Session(historic_session) },
-          );
-        }
-
-        // Save this Tributary as active to the database
-        {
-          let mut active_tributaries =
-            ActiveTributaries::get(&txn).unwrap_or(Vec::with_capacity(1));
-          active_tributaries.push(new_set.clone());
-          ActiveTributaries::set(&mut txn, &active_tributaries);
-        }
-
-        // Send GenerateKey to the processor
-        let msg = messages::key_gen::CoordinatorMessage::GenerateKey {
-          session: new_set.set.session,
-          threshold: new_set.threshold,
-          evrf_public_keys: new_set.evrf_public_keys.clone(),
-        };
-        let msg = messages::CoordinatorMessage::from(msg);
-        let metadata = Metadata {
-          from: Service::Coordinator,
-          to: Service::Processor(new_set.set.network),
-          intent: msg.intent(),
-        };
-        let msg = borsh::to_vec(&msg).unwrap();
-        // TODO: Make this fallible
-        self.message_queue.queue(metadata, msg).await;
-
-        // Commit the transaction for all of this
-        txn.commit();
-
-        // Now spawn the Tributary
-        // If we reboot after committing the txn, but before this is called, this will be called
-        // on boot
-        spawn_tributary(
-          self.db.clone(),
-          self.message_queue.clone(),
-          self.p2p.clone(),
-          &self.p2p_add_tributary,
-          new_set,
-          self.serai_key.clone(),
-        )
-        .await;
-
-        made_progress = true;
-      }
-
-      Ok(made_progress)
-    }
-  }
 }
 
 #[tokio::main]

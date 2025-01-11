@@ -96,10 +96,11 @@ members = [
   "processor/ethereum",
   "processor/monero",
 
-  "coordinator/tributary/tendermint",
-  "coordinator/tributary",
+  "coordinator/tributary-sdk/tendermint",
+  "coordinator/tributary-sdk",
   "coordinator/cosign",
   "coordinator/substrate",
+  "coordinator/tributary",
   "coordinator/p2p",
   "coordinator/p2p/libp2p",
   "coordinator",

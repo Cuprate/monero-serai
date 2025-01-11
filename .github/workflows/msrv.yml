@@ -173,10 +173,11 @@ jobs:
 
       - name: Run cargo msrv on coordinator
         run: |
-          cargo msrv verify --manifest-path coordinator/tributary/tendermint/Cargo.toml
-          cargo msrv verify --manifest-path coordinator/tributary/Cargo.toml
+          cargo msrv verify --manifest-path coordinator/tributary-sdk/tendermint/Cargo.toml
+          cargo msrv verify --manifest-path coordinator/tributary-sdk/Cargo.toml
           cargo msrv verify --manifest-path coordinator/cosign/Cargo.toml
           cargo msrv verify --manifest-path coordinator/substrate/Cargo.toml
+          cargo msrv verify --manifest-path coordinator/tributary/Cargo.toml
           cargo msrv verify --manifest-path coordinator/p2p/Cargo.toml
           cargo msrv verify --manifest-path coordinator/p2p/libp2p/Cargo.toml
           cargo msrv verify --manifest-path coordinator/Cargo.toml

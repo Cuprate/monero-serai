@@ -8331,6 +8331,7 @@ dependencies = [
  "serai-coordinator-libp2p-p2p",
  "serai-coordinator-p2p",
  "serai-coordinator-substrate",
+ "serai-coordinator-tributary",
  "serai-cosign",
  "serai-db",
  "serai-env",
@@ -8338,7 +8339,7 @@ dependencies = [
  "serai-processor-messages",
  "serai-task",
  "tokio",
- "tributary-chain",
+ "tributary-sdk",
  "zalloc",
  "zeroize",
 ]
@@ -8361,7 +8362,7 @@ dependencies = [
  "serai-cosign",
  "serai-task",
  "tokio",
- "tributary-chain",
+ "tributary-sdk",
  "void",
  "zeroize",
 ]
@@ -8378,7 +8379,7 @@ dependencies = [
  "serai-db",
  "serai-task",
  "tokio",
- "tributary-chain",
+ "tributary-sdk",
 ]
 
 [[package]]
@@ -8419,6 +8420,27 @@ dependencies = [
  "serai-message-queue-tests",
  "serai-processor-messages",
  "tokio",
+ "zeroize",
+]
+
+[[package]]
+name = "serai-coordinator-tributary"
+version = "0.1.0"
+dependencies = [
+ "blake2",
+ "borsh",
+ "ciphersuite",
+ "log",
+ "parity-scale-codec",
+ "rand_core",
+ "schnorr-signatures",
+ "serai-client",
+ "serai-coordinator-substrate",
+ "serai-cosign",
+ "serai-db",
+ "serai-processor-messages",
+ "serai-task",
+ "tributary-sdk",
  "zeroize",
 ]
 
@@ -10975,7 +10997,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tributary-chain"
+name = "tributary-sdk"
 version = "0.1.0"
 dependencies = [
  "blake2",

@@ -31,7 +31,7 @@ borsh = { version = "1", default-features = false, features = ["std", "derive", 
 
 serai-client = { path = "../../../substrate/client", default-features = false, features = ["serai", "borsh"] }
 serai-cosign = { path = "../../cosign" }
-tributary = { package = "tributary-chain", path = "../../tributary" }
+tributary-sdk = { path = "../../tributary-sdk" }
 
 void = { version = "1", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }

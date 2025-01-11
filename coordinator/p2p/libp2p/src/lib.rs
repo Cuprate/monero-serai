@@ -259,7 +259,7 @@ impl Libp2p {
   }
 }
 
-impl tributary::P2p for Libp2p {
+impl tributary_sdk::P2p for Libp2p {
   fn broadcast(&self, tributary: [u8; 32], message: Vec<u8>) -> impl Send + Future<Output = ()> {
     async move {
       self

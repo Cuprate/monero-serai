@@ -24,7 +24,7 @@ serai-db = { path = "../../common/db", version = "0.1" }
 
 serai-client = { path = "../../substrate/client", default-features = false, features = ["serai", "borsh"] }
 serai-cosign = { path = "../cosign" }
-tributary = { package = "tributary-chain", path = "../tributary" }
+tributary-sdk = { path = "../tributary-sdk" }
 
 futures-lite = { version = "2", default-features = false, features = ["std"] }
 tokio = { version = "1", default-features = false, features = ["sync", "macros"] }

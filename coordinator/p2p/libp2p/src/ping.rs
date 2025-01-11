@@ -1,6 +1,6 @@
 use core::time::Duration;
 
-use tributary::tendermint::LATENCY_TIME;
+use tributary_sdk::tendermint::LATENCY_TIME;
 
 use libp2p::ping::{self, Config, Behaviour};
 pub use ping::Event;

@@ -60,9 +60,10 @@ jobs:
             -p serai-ethereum-processor \
             -p serai-monero-processor \
             -p tendermint-machine \
-            -p tributary-chain \
+            -p tributary-sdk \
             -p serai-cosign \
             -p serai-coordinator-substrate \
+            -p serai-coordinator-tributary \
             -p serai-coordinator-p2p \
             -p serai-coordinator-libp2p-p2p \
             -p serai-coordinator \

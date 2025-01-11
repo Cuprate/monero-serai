@@ -5,7 +5,7 @@ use serai_db::{DbTxn, Db};
 
 use serai_client::validator_sets::primitives::ValidatorSet;
 
-use ::tributary::{ProvidedError, Tributary};
+use tributary_sdk::{ProvidedError, Tributary};
 
 use serai_task::{TaskHandle, ContinuallyRan};
 
@@ -13,15 +13,8 @@ use message_queue::{Service, Metadata, client::MessageQueue};
 
 use serai_cosign::Cosigning;
 use serai_coordinator_substrate::NewSetInformation;
+use serai_coordinator_tributary::{Transaction, ProcessorMessages};
 use serai_coordinator_p2p::P2p;
-
-mod transaction;
-pub use transaction::Transaction;
-
-mod db;
-
-mod scan;
-pub(crate) use scan::ScanTributaryTask;
 
 pub(crate) struct ScanTributaryMessagesTask<TD: Db> {
   pub(crate) tributary_db: TD,
@@ -35,7 +28,7 @@ impl<TD: Db> ContinuallyRan for ScanTributaryMessagesTask<TD> {
       let mut made_progress = false;
       loop {
         let mut txn = self.tributary_db.txn();
-        let Some(msg) = db::TributaryDb::try_recv_message(&mut txn, self.set) else { break };
+        let Some(msg) = ProcessorMessages::try_recv(&mut txn, self.set) else { break };
         let metadata = Metadata {
           from: Service::Coordinator,
           to: Service::Processor(self.set.network),
@@ -152,7 +145,7 @@ pub(crate) async fn run<CD: Db, TD: Db, P: P2p>(
     // Have the tributary scanner run as soon as there's a new block
     // This is wrapped in a timeout so we don't go too long without running the above code
     match tokio::time::timeout(
-      Duration::from_millis(::tributary::tendermint::TARGET_BLOCK_TIME.into()),
+      Duration::from_millis(tributary_sdk::tendermint::TARGET_BLOCK_TIME.into()),
       tributary.next_block_notification().await,
     )
     .await

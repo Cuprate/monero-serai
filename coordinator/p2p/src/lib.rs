@@ -10,7 +10,7 @@ use borsh::{BorshSerialize, BorshDeserialize};
 use serai_client::{primitives::NetworkId, validator_sets::primitives::ValidatorSet};
 
 use serai_db::Db;
-use tributary::{ReadWrite, TransactionTrait, Tributary, TributaryReader};
+use tributary_sdk::{ReadWrite, TransactionTrait, Tributary, TributaryReader};
 use serai_cosign::{SignedCosign, Cosigning};
 
 use tokio::sync::{mpsc, oneshot};
@@ -49,7 +49,9 @@ pub trait Peer<'a>: Send {
 }
 
 /// The representation of the P2P network.
-pub trait P2p: Send + Sync + Clone + tributary::P2p + serai_cosign::RequestNotableCosigns {
+pub trait P2p:
+  Send + Sync + Clone + tributary_sdk::P2p + serai_cosign::RequestNotableCosigns
+{
   /// The representation of a peer.
   type Peer<'a>: Peer<'a>;
 
