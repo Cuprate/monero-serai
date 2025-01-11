@@ -25,20 +25,20 @@ rand = { version = "0.8", default-features = false, features = ["std"] }
 rand_chacha = { version = "0.3", default-features = false, features = ["std"] }
 
 blake2 = { version = "0.10", default-features = false, features = ["std"] }
-transcript = { package = "flexible-transcript", path = "../../crypto/transcript", default-features = false, features = ["std", "recommended"] }
+transcript = { package = "flexible-transcript", path = "../../crypto/transcript", version = "0.3", default-features = false, features = ["std", "recommended"] }
 
-ciphersuite = { package = "ciphersuite", path = "../../crypto/ciphersuite", default-features = false, features = ["std", "ristretto"] }
-schnorr = { package = "schnorr-signatures", path = "../../crypto/schnorr", default-features = false, features = ["std"] }
+ciphersuite = { package = "ciphersuite", path = "../../crypto/ciphersuite", version = "0.4", default-features = false, features = ["std", "ristretto"] }
+schnorr = { package = "schnorr-signatures", path = "../../crypto/schnorr", version = "0.5", default-features = false, features = ["std"] }
 
 hex = { version = "0.4", default-features = false, features = ["std"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 
-serai-db = { path = "../../common/db" }
+serai-db = { path = "../../common/db", version = "0.1" }
 
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["std", "derive"] }
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink", "channel"] }
 futures-channel = { version = "0.3", default-features = false, features = ["std", "sink"] }
-tendermint = { package = "tendermint-machine", path = "./tendermint" }
+tendermint = { package = "tendermint-machine", path = "./tendermint", version = "0.2" }
 
 tokio = { version = "1", default-features = false, features = ["sync", "time", "rt"] }
 
