@@ -184,8 +184,8 @@ create_db!(
     // The last handled tributary block's (number, hash)
     LastHandledTributaryBlock: (set: ValidatorSet) -> (u64, [u8; 32]),
 
-    // The slash points a validator has accrued, with u64::MAX representing a fatal slash.
-    SlashPoints: (set: ValidatorSet, validator: SeraiAddress) -> u64,
+    // The slash points a validator has accrued, with u32::MAX representing a fatal slash.
+    SlashPoints: (set: ValidatorSet, validator: SeraiAddress) -> u32,
 
     // The latest Substrate block to cosign.
     LatestSubstrateBlockToCosign: (set: ValidatorSet) -> [u8; 32],
@@ -316,7 +316,7 @@ impl TributaryDb {
     reason: &str,
   ) {
     log::warn!("{validator} fatally slashed: {reason}");
-    SlashPoints::set(txn, set, validator, &u64::MAX);
+    SlashPoints::set(txn, set, validator, &u32::MAX);
   }
 
   pub(crate) fn is_fatally_slashed(
@@ -324,7 +324,7 @@ impl TributaryDb {
     set: ValidatorSet,
     validator: SeraiAddress,
   ) -> bool {
-    SlashPoints::get(getter, set, validator).unwrap_or(0) == u64::MAX
+    SlashPoints::get(getter, set, validator).unwrap_or(0) == u32::MAX
   }
 
   #[allow(clippy::too_many_arguments)]

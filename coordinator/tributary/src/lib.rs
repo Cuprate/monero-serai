@@ -511,3 +511,13 @@ impl<CD: Db, TD: Db, P: P2p> ContinuallyRan for ScanTributaryTask<CD, TD, P> {
     }
   }
 }
+
+/// Create the Transaction::SlashReport to publish per the local view.
+pub fn slash_report_transaction(getter: &impl Get, set: &NewSetInformation) -> Transaction {
+  let mut slash_points = Vec::with_capacity(set.validators.len());
+  for (validator, _weight) in set.validators.iter().copied() {
+    let validator = SeraiAddress::from(validator);
+    slash_points.push(SlashPoints::get(getter, set.set, validator).unwrap_or(0));
+  }
+  Transaction::SlashReport { slash_points, signed: Signed::default() }
+}

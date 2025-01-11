@@ -6,7 +6,7 @@ use rand_core::{RngCore, CryptoRng};
 
 use blake2::{digest::typenum::U32, Digest, Blake2b};
 use ciphersuite::{
-  group::{ff::Field, GroupEncoding},
+  group::{ff::Field, Group, GroupEncoding},
   Ciphersuite, Ristretto,
 };
 use schnorr::SchnorrSignature;
@@ -77,6 +77,18 @@ impl Signed {
   /// Provide a nonce to convert a `Signed` into a `tributary::Signed`.
   fn to_tributary_signed(self, nonce: u32) -> TributarySigned {
     TributarySigned { signer: self.signer, nonce, signature: self.signature }
+  }
+}
+
+impl Default for Signed {
+  fn default() -> Self {
+    Self {
+      signer: <Ristretto as Ciphersuite>::G::identity(),
+      signature: SchnorrSignature {
+        R: <Ristretto as Ciphersuite>::G::identity(),
+        s: <Ristretto as Ciphersuite>::F::ZERO,
+      },
+    }
   }
 }
 

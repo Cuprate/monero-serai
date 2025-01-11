@@ -66,8 +66,8 @@ mod _public_db {
 
       // Relevant new set, from an ephemeral event stream
       NewSet: () -> NewSetInformation,
-      // Relevant sign slash report, from an ephemeral event stream
-      SignSlashReport: () -> ValidatorSet,
+      // Potentially relevant sign slash report, from an ephemeral event stream
+      SignSlashReport: (set: ValidatorSet) -> (),
     }
   );
 }
@@ -109,12 +109,12 @@ impl NewSet {
 /// notifications for all relevant validator sets will be included.
 pub struct SignSlashReport;
 impl SignSlashReport {
-  pub(crate) fn send(txn: &mut impl DbTxn, set: &ValidatorSet) {
-    _public_db::SignSlashReport::send(txn, set);
+  pub(crate) fn send(txn: &mut impl DbTxn, set: ValidatorSet) {
+    _public_db::SignSlashReport::send(txn, set, &());
   }
   /// Try to receive a notification to sign a slash report, returning `None` if there is none to
   /// receive.
-  pub fn try_recv(txn: &mut impl DbTxn) -> Option<ValidatorSet> {
-    _public_db::SignSlashReport::try_recv(txn)
+  pub fn try_recv(txn: &mut impl DbTxn, set: ValidatorSet) -> Option<()> {
+    _public_db::SignSlashReport::try_recv(txn, set)
   }
 }

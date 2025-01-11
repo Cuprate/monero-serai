@@ -17,7 +17,7 @@ use message_queue::{Service, client::MessageQueue};
 use serai_task::{Task, TaskHandle, ContinuallyRan};
 
 use serai_cosign::{SignedCosign, Cosigning};
-use serai_coordinator_substrate::{CanonicalEventStream, EphemeralEventStream};
+use serai_coordinator_substrate::{CanonicalEventStream, EphemeralEventStream, SignSlashReport};
 use serai_coordinator_tributary::Transaction;
 
 mod db;
@@ -148,6 +148,8 @@ async fn main() {
       prune_tributary_db(to_cleanup);
       // Drain the cosign intents created for this set
       while !Cosigning::<Db>::intended_cosigns(&mut txn, to_cleanup).is_empty() {}
+      // Remove the SignSlashReport notification
+      SignSlashReport::try_recv(&mut txn, to_cleanup);
     }
 
     // Remove retired Tributaries from ActiveTributaries
@@ -198,7 +200,6 @@ async fn main() {
   };
 
   // Spawn the Substrate scanners
-  // TODO: SignSlashReport
   let (substrate_task_def, substrate_task) = Task::new();
   let (substrate_canonical_task_def, substrate_canonical_task) = Task::new();
   tokio::spawn(

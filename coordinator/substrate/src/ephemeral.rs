@@ -234,7 +234,7 @@ impl<D: Db> ContinuallyRan for EphemeralEventStream<D> {
           else {
             panic!("AcceptedHandover event wasn't a AcceptedHandover event: {accepted_handover:?}");
           };
-          crate::SignSlashReport::send(&mut txn, set);
+          crate::SignSlashReport::send(&mut txn, *set);
         }
 
         txn.commit();
