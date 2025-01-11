@@ -188,7 +188,7 @@ impl Libp2p {
 
       let mut swarm = SwarmBuilder::with_existing_identity(identity::Keypair::generate_ed25519())
         .with_tokio()
-        .with_tcp(TcpConfig::default().nodelay(false), new_only_validators, new_yamux)
+        .with_tcp(TcpConfig::default().nodelay(true), new_only_validators, new_yamux)
         .unwrap()
         .with_behaviour(|_| Behavior {
           allow_list: allow_block_list::Behaviour::default(),
