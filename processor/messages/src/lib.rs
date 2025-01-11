@@ -24,7 +24,7 @@ pub mod key_gen {
   pub enum CoordinatorMessage {
     /// Instructs the Processor to begin the key generation process.
     ///
-    /// This is sent by the Coordinator when it creates the Tributary (TODO).
+    /// This is sent by the Coordinator when it creates the Tributary.
     GenerateKey { session: Session, threshold: u16, evrf_public_keys: Vec<([u8; 32], Vec<u8>)> },
     /// Received participations for the specified key generation protocol.
     ///

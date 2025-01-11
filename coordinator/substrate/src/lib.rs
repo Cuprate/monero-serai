@@ -32,7 +32,7 @@ fn borsh_deserialize_validators<R: io::Read>(
 }
 
 /// The information for a new set.
-#[derive(Debug, BorshSerialize, BorshDeserialize)]
+#[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
 pub struct NewSetInformation {
   /// The set.
   pub set: ValidatorSet,
