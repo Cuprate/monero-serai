@@ -31,7 +31,7 @@ mod db;
 use db::*;
 
 mod tributary;
-use tributary::{Transaction, ScanTributaryTask};
+use tributary::{Transaction, ScanTributaryTask, ScanTributaryMessagesTask};
 
 mod p2p {
   pub use serai_coordinator_p2p::*;
@@ -111,6 +111,7 @@ fn spawn_cosigning(
 /// This will spawn the Tributary, the Tributary scanning task, and inform the P2P network.
 async fn spawn_tributary<P: p2p::P2p>(
   mut db: Db,
+  message_queue: Arc<MessageQueue>,
   p2p: P,
   p2p_add_tributary: &mpsc::UnboundedSender<(ValidatorSet, Tributary<P>)>,
   set: NewSetInformation,
@@ -168,7 +169,16 @@ async fn spawn_tributary<P: p2p::P2p>(
       .unwrap();
   let reader = tributary.reader();
 
-  p2p_add_tributary.send((set.set, tributary)).expect("p2p's add_tributary channel was closed?");
+  p2p_add_tributary
+    .send((set.set, tributary.clone()))
+    .expect("p2p's add_tributary channel was closed?");
+
+  // Spawn the task to send all messages from the Tributary scanner to the message-queue
+  let (scan_tributary_messages_task_def, scan_tributary_messages_task) = Task::new();
+  tokio::spawn(
+    (ScanTributaryMessagesTask { tributary_db: tributary_db.clone(), set: set.set, message_queue })
+      .continually_run(scan_tributary_messages_task_def, vec![]),
+  );
 
   let (scan_tributary_task_def, mut scan_tributary_task) = Task::new();
   tokio::spawn(
@@ -182,9 +192,10 @@ async fn spawn_tributary<P: p2p::P2p>(
       tributary: reader,
       _p2p: PhantomData::<P>,
     })
-    .continually_run(scan_tributary_task_def, vec![todo!("TODO")]),
+    // This is the only handle for this ScanTributaryMessagesTask, so when this task is dropped, it
+    // will be too
+    .continually_run(scan_tributary_task_def, vec![scan_tributary_messages_task]),
   );
-  // TODO^ On Tributary block, drain this task's ProcessorMessages
 
   tokio::spawn(async move {
     loop {
@@ -363,7 +374,7 @@ async fn main() {
   };
 
   // Connect to the message-queue
-  let message_queue = MessageQueue::from_env(Service::Coordinator);
+  let message_queue = Arc::new(MessageQueue::from_env(Service::Coordinator));
 
   // Connect to the Serai node
   let serai = serai().await;
@@ -429,8 +440,15 @@ async fn main() {
 
   // Spawn all Tributaries on-disk
   for tributary in existing_tributaries_at_boot {
-    spawn_tributary(db.clone(), p2p.clone(), &p2p_add_tributary_send, tributary, serai_key.clone())
-      .await;
+    spawn_tributary(
+      db.clone(),
+      message_queue.clone(),
+      p2p.clone(),
+      &p2p_add_tributary_send,
+      tributary,
+      serai_key.clone(),
+    )
+    .await;
   }
 
   // TODO: Hndle processor messages

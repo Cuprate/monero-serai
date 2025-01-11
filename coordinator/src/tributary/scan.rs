@@ -414,7 +414,7 @@ impl<CD: Db, TD: Db, P: P2p> ContinuallyRan for ScanTributaryTask<CD, TD, P> {
         TributaryDb::last_handled_tributary_block(&self.tributary_db, self.set)
           .unwrap_or((0, self.tributary.genesis()));
 
-      let mut made_progess = false;
+      let mut made_progress = false;
       while let Some(next) = self.tributary.block_after(&last_block_hash) {
         let block = self.tributary.block(&next).unwrap();
         let block_number = last_block_number + 1;
@@ -457,10 +457,10 @@ impl<CD: Db, TD: Db, P: P2p> ContinuallyRan for ScanTributaryTask<CD, TD, P> {
         last_block_hash = block_hash;
         tributary_txn.commit();
 
-        made_progess = true;
+        made_progress = true;
       }
 
-      Ok(made_progess)
+      Ok(made_progress)
     }
   }
 }

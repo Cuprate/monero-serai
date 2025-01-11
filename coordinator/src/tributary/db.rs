@@ -446,4 +446,11 @@ impl TributaryDb {
   ) {
     ProcessorMessages::send(txn, set, &message.into());
   }
+
+  pub(crate) fn try_recv_message(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+  ) -> Option<messages::CoordinatorMessage> {
+    ProcessorMessages::try_recv(txn, set)
+  }
 }
