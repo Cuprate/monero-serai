@@ -213,17 +213,17 @@ pub mod substrate {
   pub enum CoordinatorMessage {
     /// Keys set on the Serai blockchain.
     ///
-    /// This is set by the Coordinator's Substrate canonical event stream.
+    /// This is sent by the Coordinator's Substrate canonical event stream.
     SetKeys { serai_time: u64, session: Session, key_pair: KeyPair },
     /// Slashes reported on the Serai blockchain OR the process timed out.
     ///
     /// This is the final message for a session,
     ///
-    /// This is set by the Coordinator's Substrate canonical event stream.
+    /// This is sent by the Coordinator's Substrate canonical event stream.
     SlashesReported { session: Session },
     /// A block from Serai with relevance to this processor.
     ///
-    /// This is set by the Coordinator's Substrate canonical event stream.
+    /// This is sent by the Coordinator's Substrate canonical event stream.
     Block {
       serai_block_number: u64,
       batch: Option<ExecutedBatch>,

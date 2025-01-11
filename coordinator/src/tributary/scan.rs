@@ -45,16 +45,21 @@ struct ScanBlock<'a, CD: Db, TD: Db, TDT: DbTxn, P: P2p> {
 impl<'a, CD: Db, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, CD, TD, TDT, P> {
   fn potentially_start_cosign(&mut self) {
     // Don't start a new cosigning instance if we're actively running one
-    if TributaryDb::actively_cosigning(self.tributary_txn, self.set) {
+    if TributaryDb::actively_cosigning(self.tributary_txn, self.set).is_some() {
       return;
     }
 
-    // Start cosigning the latest intended-to-be-cosigned block
+    // Fetch the latest intended-to-be-cosigned block
     let Some(latest_substrate_block_to_cosign) =
       TributaryDb::latest_substrate_block_to_cosign(self.tributary_txn, self.set)
     else {
       return;
     };
+
+    // If it was already cosigned, return
+    if TributaryDb::cosigned(self.tributary_txn, self.set, latest_substrate_block_to_cosign) {
+      return;
+    }
 
     let Some(substrate_block_number) =
       Cosigning::<CD>::finalized_block_number(self.cosign_db, latest_substrate_block_to_cosign)
@@ -65,7 +70,12 @@ impl<'a, CD: Db, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, CD, TD, TDT, P> {
     };
 
     // Mark us as actively cosigning
-    TributaryDb::start_cosigning(self.tributary_txn, self.set, substrate_block_number);
+    TributaryDb::start_cosigning(
+      self.tributary_txn,
+      self.set,
+      latest_substrate_block_to_cosign,
+      substrate_block_number,
+    );
     // Send the message for the processor to start signing
     TributaryDb::send_message(
       self.tributary_txn,
@@ -154,24 +164,31 @@ impl<'a, CD: Db, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, CD, TD, TDT, P> {
           self.set,
           substrate_block_hash,
         );
-        // Start a new cosign if we weren't already working on one
+        // Start a new cosign if we aren't already working on one
         self.potentially_start_cosign();
       }
       Transaction::Cosigned { substrate_block_hash } => {
-        TributaryDb::finish_cosigning(self.tributary_txn, self.set);
+        /*
+          We provide one Cosigned per Cosign transaction, but they have independent orders. This
+          means we may receive Cosigned before Cosign. In order to ensure we only start work on
+          not-yet-Cosigned cosigns, we flag all cosigned blocks as cosigned. Then, when we choose
+          the next block to work on, we won't if it's already been cosigned.
+        */
+        TributaryDb::mark_cosigned(self.tributary_txn, self.set, substrate_block_hash);
 
-        // Fetch the latest intended-to-be-cosigned block
-        let Some(latest_substrate_block_to_cosign) =
-          TributaryDb::latest_substrate_block_to_cosign(self.tributary_txn, self.set)
-        else {
-          return;
-        };
-        // If this is the block we just cosigned, return, preventing us from signing it again
-        if latest_substrate_block_to_cosign == substrate_block_hash {
+        // If we aren't actively cosigning this block, return
+        // This occurs when we have Cosign TXs A, B, C, we received Cosigned for A and start on C,
+        // and then receive Cosigned for B
+        if TributaryDb::actively_cosigning(self.tributary_txn, self.set) !=
+          Some(substrate_block_hash)
+        {
           return;
         }
 
-        // Since we do have a new cosign to work on, start it
+        // Since this is the block we were cosigning, mark us as having finished cosigning
+        TributaryDb::finish_cosigning(self.tributary_txn, self.set);
+
+        // Start working on the next cosign
         self.potentially_start_cosign();
       }
       Transaction::SubstrateBlock { hash } => {

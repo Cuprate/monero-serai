@@ -82,13 +82,13 @@ enum HasEvents {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
 pub struct CosignIntent {
   /// The global session this cosign is being performed under.
-  global_session: [u8; 32],
+  pub global_session: [u8; 32],
   /// The number of the block to cosign.
-  block_number: u64,
+  pub block_number: u64,
   /// The hash of the block to cosign.
-  block_hash: [u8; 32],
+  pub block_hash: [u8; 32],
   /// If this cosign must be handled before further cosigns are.
-  notable: bool,
+  pub notable: bool,
 }
 
 /// A cosign.

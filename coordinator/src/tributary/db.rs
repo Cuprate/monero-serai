@@ -189,8 +189,10 @@ create_db!(
 
     // The latest Substrate block to cosign.
     LatestSubstrateBlockToCosign: (set: ValidatorSet) -> [u8; 32],
-    // If we're actively cosigning or not.
-    ActivelyCosigning: (set: ValidatorSet) -> (),
+    // The hash of the block we're actively cosigning.
+    ActivelyCosigning: (set: ValidatorSet) -> [u8; 32],
+    // If this block has already been cosigned.
+    Cosigned: (set: ValidatorSet, substrate_block_hash: [u8; 32]) -> (),
 
     // The weight accumulated for a topic.
     AccumulatedWeight: (set: ValidatorSet, topic: Topic) -> u64,
@@ -238,19 +240,20 @@ impl TributaryDb {
   ) {
     LatestSubstrateBlockToCosign::set(txn, set, &substrate_block_hash);
   }
-  pub(crate) fn actively_cosigning(txn: &mut impl DbTxn, set: ValidatorSet) -> bool {
-    ActivelyCosigning::get(txn, set).is_some()
+  pub(crate) fn actively_cosigning(txn: &mut impl DbTxn, set: ValidatorSet) -> Option<[u8; 32]> {
+    ActivelyCosigning::get(txn, set)
   }
   pub(crate) fn start_cosigning(
     txn: &mut impl DbTxn,
     set: ValidatorSet,
+    substrate_block_hash: [u8; 32],
     substrate_block_number: u64,
   ) {
     assert!(
       ActivelyCosigning::get(txn, set).is_none(),
       "starting cosigning while already cosigning"
     );
-    ActivelyCosigning::set(txn, set, &());
+    ActivelyCosigning::set(txn, set, &substrate_block_hash);
 
     TributaryDb::recognize_topic(
       txn,
@@ -264,6 +267,20 @@ impl TributaryDb {
   }
   pub(crate) fn finish_cosigning(txn: &mut impl DbTxn, set: ValidatorSet) {
     assert!(ActivelyCosigning::take(txn, set).is_some(), "finished cosigning but not cosigning");
+  }
+  pub(crate) fn mark_cosigned(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+    substrate_block_hash: [u8; 32],
+  ) {
+    Cosigned::set(txn, set, substrate_block_hash, &());
+  }
+  pub(crate) fn cosigned(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+    substrate_block_hash: [u8; 32],
+  ) -> bool {
+    Cosigned::get(txn, set, substrate_block_hash).is_some()
   }
 
   pub(crate) fn recognize_topic(txn: &mut impl DbTxn, set: ValidatorSet, topic: Topic) {

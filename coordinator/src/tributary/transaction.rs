@@ -231,9 +231,11 @@ impl TransactionTrait for Transaction {
         TransactionKind::Signed((b"DkgConfirmation", attempt).encode(), signed.nonce(1))
       }
 
-      Transaction::Cosign { .. } => TransactionKind::Provided("CosignSubstrateBlock"),
+      Transaction::Cosign { .. } => TransactionKind::Provided("Cosign"),
       Transaction::Cosigned { .. } => TransactionKind::Provided("Cosigned"),
+      // TODO: Provide this
       Transaction::SubstrateBlock { .. } => TransactionKind::Provided("SubstrateBlock"),
+      // TODO: Provide this
       Transaction::Batch { .. } => TransactionKind::Provided("Batch"),
 
       Transaction::Sign { id, attempt, round, signed, .. } => {
