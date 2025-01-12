@@ -128,7 +128,6 @@ create_db! {
 
     // An index of Substrate blocks
     SubstrateBlockHash: (block_number: u64) -> [u8; 32],
-    SubstrateBlockNumber: (block_hash: [u8; 32]) -> u64,
     // A mapping from a global session's ID to its relevant information.
     GlobalSessions: (global_session: [u8; 32]) -> GlobalSession,
     // The last block to be cosigned by a global session.
@@ -229,6 +228,43 @@ pub trait RequestNotableCosigns: 'static + Send {
 #[derive(Debug)]
 pub struct Faulted;
 
+/// An error incurred while intaking a cosign.
+#[derive(Debug)]
+pub enum IntakeCosignError {
+  /// Cosign is for a not-yet-indexed block
+  NotYetIndexedBlock,
+  /// A later cosign for this cosigner has already been handled
+  StaleCosign,
+  /// The cosign's global session isn't recognized
+  UnrecognizedGlobalSession,
+  /// The cosign is for a block before its global session starts
+  BeforeGlobalSessionStart,
+  /// The cosign is for a block after its global session ends
+  AfterGlobalSessionEnd,
+  /// The cosign's signing network wasn't a participant in this global session
+  NonParticipatingNetwork,
+  /// The cosign had an invalid signature
+  InvalidSignature,
+  /// The cosign is for a global session which has yet to have its declaration block cosigned
+  FutureGlobalSession,
+}
+
+impl IntakeCosignError {
+  /// If this error is temporal to the local view
+  pub fn temporal(&self) -> bool {
+    match self {
+      IntakeCosignError::NotYetIndexedBlock |
+      IntakeCosignError::StaleCosign |
+      IntakeCosignError::UnrecognizedGlobalSession |
+      IntakeCosignError::FutureGlobalSession => true,
+      IntakeCosignError::BeforeGlobalSessionStart |
+      IntakeCosignError::AfterGlobalSessionEnd |
+      IntakeCosignError::NonParticipatingNetwork |
+      IntakeCosignError::InvalidSignature => false,
+    }
+  }
+}
+
 /// The interface to manage cosigning with.
 pub struct Cosigning<D: Db> {
   db: D,
@@ -282,13 +318,6 @@ impl<D: Db> Cosigning<D> {
     ))
   }
 
-  /// Fetch a finalized block's number by its hash.
-  ///
-  /// This block is not guaranteed to be cosigned.
-  pub fn finalized_block_number(getter: &impl Get, block_hash: [u8; 32]) -> Option<u64> {
-    SubstrateBlockNumber::get(getter, block_hash)
-  }
-
   /// Fetch the notable cosigns for a global session in order to respond to requests.
   ///
   /// If this global session hasn't produced any notable cosigns, this will return the latest
@@ -335,25 +364,15 @@ impl<D: Db> Cosigning<D> {
   }
 
   /// Intake a cosign.
-  ///
-  /// - Returns Err(_) if there was an error trying to validate the cosign.
-  /// - Returns Ok(true) if the cosign was successfully handled or could not be handled at this
-  ///   time.
-  /// - Returns Ok(false) if the cosign was invalid.
-  //
-  // We collapse a cosign which shouldn't be handled yet into a valid cosign (`Ok(true)`) as we
-  // assume we'll either explicitly request it if we need it or we'll naturally see it (or a later,
-  // more relevant, cosign) again.
   //
   // Takes `&mut self` as this should only be called once at any given moment.
-  // TODO: Don't overload bool here
-  pub fn intake_cosign(&mut self, signed_cosign: &SignedCosign) -> Result<bool, String> {
+  pub fn intake_cosign(&mut self, signed_cosign: &SignedCosign) -> Result<(), IntakeCosignError> {
     let cosign = &signed_cosign.cosign;
     let network = cosign.cosigner;
 
     // Check our indexed blockchain includes a block with this block number
     let Some(our_block_hash) = SubstrateBlockHash::get(&self.db, cosign.block_number) else {
-      return Ok(true);
+      Err(IntakeCosignError::NotYetIndexedBlock)?
     };
     let faulty = cosign.block_hash != our_block_hash;
 
@@ -363,20 +382,19 @@ impl<D: Db> Cosigning<D> {
         NetworksLatestCosignedBlock::get(&self.db, cosign.global_session, network)
       {
         if existing.cosign.block_number >= cosign.block_number {
-          return Ok(true);
+          Err(IntakeCosignError::StaleCosign)?;
         }
       }
     }
 
     let Some(global_session) = GlobalSessions::get(&self.db, cosign.global_session) else {
-      // Unrecognized global session
-      return Ok(true);
+      Err(IntakeCosignError::UnrecognizedGlobalSession)?
     };
 
     // Check the cosigned block number is in range to the global session
     if cosign.block_number < global_session.start_block_number {
       // Cosign is for a block predating the global session
-      return Ok(false);
+      Err(IntakeCosignError::BeforeGlobalSessionStart)?;
     }
     if !faulty {
       // This prevents a malicious validator set, on the same chain, from producing a cosign after
@@ -384,7 +402,7 @@ impl<D: Db> Cosigning<D> {
       if let Some(last_block) = GlobalSessionsLastBlock::get(&self.db, cosign.global_session) {
         if cosign.block_number > last_block {
           // Cosign is for a block after the last block this global session should have signed
-          return Ok(false);
+          Err(IntakeCosignError::AfterGlobalSessionEnd)?;
         }
       }
     }
@@ -393,13 +411,13 @@ impl<D: Db> Cosigning<D> {
     {
       let key = Public::from({
         let Some(key) = global_session.keys.get(&network) else {
-          return Ok(false);
+          Err(IntakeCosignError::NonParticipatingNetwork)?
         };
         *key
       });
 
       if !signed_cosign.verify_signature(key) {
-        return Ok(false);
+        Err(IntakeCosignError::InvalidSignature)?;
       }
     }
 
@@ -415,7 +433,7 @@ impl<D: Db> Cosigning<D> {
       // block declaring it was cosigned
       if (global_session.start_block_number - 1) > latest_cosigned_block_number {
         drop(txn);
-        return Ok(true);
+        return Err(IntakeCosignError::FutureGlobalSession);
       }
 
       // This is safe as it's in-range and newer, as prior checked since it isn't faulty
@@ -429,9 +447,10 @@ impl<D: Db> Cosigning<D> {
 
         let mut weight_cosigned = 0;
         for fault in &faults {
-          let Some(stake) = global_session.stakes.get(&fault.cosign.cosigner) else {
-            Err("cosigner with recognized key didn't have a stake entry saved".to_string())?
-          };
+          let stake = global_session
+            .stakes
+            .get(&fault.cosign.cosigner)
+            .expect("cosigner with recognized key didn't have a stake entry saved");
           weight_cosigned += stake;
         }
 
@@ -443,7 +462,7 @@ impl<D: Db> Cosigning<D> {
     }
 
     txn.commit();
-    Ok(true)
+    Ok(())
   }
 
   /// Receive intended cosigns to produce for this ValidatorSet.
