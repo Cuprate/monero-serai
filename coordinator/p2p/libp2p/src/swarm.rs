@@ -225,8 +225,8 @@ impl SwarmTask {
             SwarmEvent::Behaviour(
               BehaviorEvent::AllowList(event) | BehaviorEvent::ConnectionLimits(event)
             ) => {
-              // Ensure these are unreachable cases, not actual events
-              let _: void::Void = event;
+              // This *is* an exhaustive match as these events are empty enums
+              match event {}
             }
             SwarmEvent::Behaviour(
               BehaviorEvent::Ping(ping::Event { peer: _, connection, result, })

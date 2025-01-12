@@ -33,7 +33,6 @@ serai-client = { path = "../../../substrate/client", default-features = false, f
 serai-cosign = { path = "../../cosign" }
 tributary-sdk = { path = "../../tributary-sdk" }
 
-void = { version = "1", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1", default-features = false, features = ["sync"] }
 libp2p = { version = "0.52", default-features = false, features = ["tokio", "tcp", "noise", "yamux", "ping", "request-response", "gossipsub", "macros"] }

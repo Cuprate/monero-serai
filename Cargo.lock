@@ -8363,7 +8363,6 @@ dependencies = [
  "serai-task",
  "tokio",
  "tributary-sdk",
- "void",
  "zeroize",
 ]
 
@@ -8402,7 +8401,6 @@ dependencies = [
 name = "serai-coordinator-tests"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "blake2",
  "borsh",
  "ciphersuite",
@@ -8605,7 +8603,6 @@ dependencies = [
 name = "serai-full-stack-tests"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "bitcoin-serai",
  "curve25519-dalek",
  "dockertest",
