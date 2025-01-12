@@ -13,7 +13,7 @@ use serai_db::{Get, DbTxn, Db as DbTrait, create_db, db_channel};
 use scale::Encode;
 use serai_client::validator_sets::primitives::ValidatorSet;
 
-use tributary_sdk::{TransactionError, ProvidedError, Tributary};
+use tributary_sdk::{TransactionKind, TransactionError, ProvidedError, TransactionTrait, Tributary};
 
 use serai_task::{Task, TaskHandle, ContinuallyRan};
 
@@ -24,11 +24,45 @@ use serai_coordinator_substrate::{NewSetInformation, SignSlashReport};
 use serai_coordinator_tributary::{Transaction, ProcessorMessages, CosignIntents, ScanTributaryTask};
 use serai_coordinator_p2p::P2p;
 
-use crate::Db;
+use crate::{Db, TributaryTransactions};
 
 db_channel! {
   Coordinator {
     PendingCosigns: (set: ValidatorSet) -> CosignIntent,
+  }
+}
+
+/// Provide a Provided Transaction to the Tributary.
+///
+/// This is not a well-designed function. This is specific to the context in which its called,
+/// within this file. It should only be considered an internal helper for this domain alone.
+async fn provide_transaction<TD: DbTrait, P: P2p>(
+  set: ValidatorSet,
+  tributary: &Tributary<TD, Transaction, P>,
+  tx: Transaction,
+) {
+  match tributary.provide_transaction(tx.clone()).await {
+    // The Tributary uses its own DB, so we may provide this multiple times if we reboot before
+    // committing the txn which provoked this
+    Ok(()) | Err(ProvidedError::AlreadyProvided) => {}
+    Err(ProvidedError::NotProvided) => {
+      panic!("providing a Transaction which wasn't a Provided transaction: {tx:?}");
+    }
+    Err(ProvidedError::InvalidProvided(e)) => {
+      panic!("providing an invalid Provided transaction, tx: {tx:?}, error: {e:?}")
+    }
+    // The Tributary's scan task won't advance if we don't have the Provided transactions
+    // present on-chain, and this enters an infinite loop to block the calling task from
+    // advancing
+    Err(ProvidedError::LocalMismatchesOnChain) => loop {
+      log::error!(
+        "Tributary {:?} was supposed to provide {:?} but peers disagree, halting Tributary",
+        set,
+        tx,
+      );
+      // Print this every five minutes as this does need to be handled
+      tokio::time::sleep(Duration::from_secs(5 * 60)).await;
+    },
   }
 }
 
@@ -43,40 +77,6 @@ impl<CD: DbTrait, TD: DbTrait, P: P2p> ContinuallyRan
   for ProvideCosignCosignedTransactionsTask<CD, TD, P>
 {
   fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
-    /// Provide a Provided Transaction to the Tributary.
-    ///
-    /// This is not a well-designed function. This is specific to the context in which its called,
-    /// within this file. It should only be considered an internal helper for this domain alone.
-    async fn provide_transaction<TD: DbTrait, P: P2p>(
-      set: ValidatorSet,
-      tributary: &Tributary<TD, Transaction, P>,
-      tx: Transaction,
-    ) {
-      match tributary.provide_transaction(tx.clone()).await {
-        // The Tributary uses its own DB, so we may provide this multiple times if we reboot before
-        // committing the txn which provoked this
-        Ok(()) | Err(ProvidedError::AlreadyProvided) => {}
-        Err(ProvidedError::NotProvided) => {
-          panic!("providing a Transaction which wasn't a Provided transaction: {tx:?}");
-        }
-        Err(ProvidedError::InvalidProvided(e)) => {
-          panic!("providing an invalid Provided transaction, tx: {tx:?}, error: {e:?}")
-        }
-        Err(ProvidedError::LocalMismatchesOnChain) => loop {
-          // The Tributary's scan task won't advance if we don't have the Provided transactions
-          // present on-chain, and this enters an infinite loop to block the calling task from
-          // advancing
-          log::error!(
-            "Tributary {:?} was supposed to provide {:?} but peers disagree, halting Tributary",
-            set,
-            tx,
-          );
-          // Print this every five minutes as this does need to be handled
-          tokio::time::sleep(Duration::from_secs(5 * 60)).await;
-        },
-      }
-    }
-
     async move {
       let mut made_progress = false;
 
@@ -145,6 +145,66 @@ impl<CD: DbTrait, TD: DbTrait, P: P2p> ContinuallyRan
   }
 }
 
+/// Adds all of the transactions sent via `TributaryTransactions`.
+pub(crate) struct AddTributaryTransactionsTask<CD: DbTrait, TD: DbTrait, P: P2p> {
+  db: CD,
+  tributary_db: TD,
+  tributary: Tributary<TD, Transaction, P>,
+  set: ValidatorSet,
+  key: Zeroizing<<Ristretto as Ciphersuite>::F>,
+}
+impl<CD: DbTrait, TD: DbTrait, P: P2p> ContinuallyRan for AddTributaryTransactionsTask<CD, TD, P> {
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+    async move {
+      let mut made_progress = false;
+      loop {
+        let mut txn = self.db.txn();
+        let Some(mut tx) = TributaryTransactions::try_recv(&mut txn, self.set) else { break };
+
+        let kind = tx.kind();
+        match kind {
+          TransactionKind::Provided(_) => provide_transaction(self.set, &self.tributary, tx).await,
+          TransactionKind::Unsigned | TransactionKind::Signed(_, _) => {
+            // If this is a signed transaction, sign it
+            if matches!(kind, TransactionKind::Signed(_, _)) {
+              tx.sign(&mut OsRng, self.tributary.genesis(), &self.key);
+            }
+
+            // Actually add the transaction
+            // TODO: If this is a preprocess, make sure the topic has been recognized
+            let res = self.tributary.add_transaction(tx.clone()).await;
+            match &res {
+              // Fresh publication, already published
+              Ok(true | false) => {}
+              Err(
+                TransactionError::TooLargeTransaction |
+                TransactionError::InvalidSigner |
+                TransactionError::InvalidNonce |
+                TransactionError::InvalidSignature |
+                TransactionError::InvalidContent,
+              ) => {
+                panic!("created an invalid transaction, tx: {tx:?}, err: {res:?}");
+              }
+              // We've published too many transactions recently
+              // Drop this txn to try to publish it again later on a future iteration
+              Err(TransactionError::TooManyInMempool) => {
+                drop(txn);
+                break;
+              }
+              // This isn't a Provided transaction so this should never be hit
+              Err(TransactionError::ProvidedAddedToMempool) => unreachable!(),
+            }
+          }
+        }
+
+        made_progress = true;
+        txn.commit();
+      }
+      Ok(made_progress)
+    }
+  }
+}
+
 /// Takes the messages from ScanTributaryTask and publishes them to the message-queue.
 pub(crate) struct TributaryProcessorMessagesTask<TD: DbTrait> {
   tributary_db: TD,
@@ -207,7 +267,10 @@ impl<CD: DbTrait, TD: DbTrait, P: P2p> ContinuallyRan for SignSlashReportTask<CD
         }
         // We've published too many transactions recently
         // Drop this txn to try to publish it again later on a future iteration
-        Err(TransactionError::TooManyInMempool) => return Ok(false),
+        Err(TransactionError::TooManyInMempool) => {
+          drop(txn);
+          return Ok(false);
+        }
         // This isn't a Provided transaction so this should never be hit
         Err(TransactionError::ProvidedAddedToMempool) => unreachable!(),
       }
@@ -343,12 +406,25 @@ pub(crate) async fn spawn_tributary<P: P2p>(
   tokio::spawn(
     (SignSlashReportTask {
       db: db.clone(),
-      tributary_db,
+      tributary_db: tributary_db.clone(),
       tributary: tributary.clone(),
       set: set.clone(),
-      key: serai_key,
+      key: serai_key.clone(),
     })
     .continually_run(sign_slash_report_task_def, vec![]),
+  );
+
+  // Spawn the add transactions task
+  let (add_tributary_transactions_task_def, add_tributary_transactions_task) = Task::new();
+  tokio::spawn(
+    (AddTributaryTransactionsTask {
+      db: db.clone(),
+      tributary_db,
+      tributary: tributary.clone(),
+      set: set.set,
+      key: serai_key,
+    })
+    .continually_run(add_tributary_transactions_task_def, vec![]),
   );
 
   // Whenever a new block occurs, immediately run the scan task
@@ -360,6 +436,10 @@ pub(crate) async fn spawn_tributary<P: P2p>(
     set.set,
     tributary,
     scan_tributary_task,
-    vec![provide_cosign_cosigned_transactions_task, sign_slash_report_task],
+    vec![
+      provide_cosign_cosigned_transactions_task,
+      sign_slash_report_task,
+      add_tributary_transactions_task,
+    ],
   ));
 }

@@ -30,8 +30,7 @@ use serai_coordinator_substrate::NewSetInformation;
 use messages::sign::VariantSignId;
 
 mod transaction;
-pub(crate) use transaction::{SigningProtocolRound, Signed};
-pub use transaction::Transaction;
+pub use transaction::{SigningProtocolRound, Signed, Transaction};
 
 mod db;
 use db::*;
@@ -60,6 +59,30 @@ impl CosignIntents {
     substrate_block_hash: [u8; 32],
   ) -> Option<CosignIntent> {
     db::CosignIntents::take(txn, set, substrate_block_hash)
+  }
+}
+
+/// The plans to whitelist upon a `Transaction::SubstrateBlock` being included on-chain.
+pub struct SubstrateBlockPlans;
+impl SubstrateBlockPlans {
+  /// Set the plans to whitelist upon the associated `Transaction::SubstrateBlock` being included
+  /// on-chain.
+  ///
+  /// This must be done before the associated `Transaction::Cosign` is provided.
+  pub fn set(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+    substrate_block_hash: [u8; 32],
+    plans: &Vec<[u8; 32]>,
+  ) {
+    db::SubstrateBlockPlans::set(txn, set, substrate_block_hash, &plans);
+  }
+  fn take(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+    substrate_block_hash: [u8; 32],
+  ) -> Option<Vec<[u8; 32]>> {
+    db::SubstrateBlockPlans::take(txn, set, substrate_block_hash)
   }
 }
 
@@ -222,11 +245,32 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
       }
       Transaction::SubstrateBlock { hash } => {
         // Whitelist all of the IDs this Substrate block causes to be signed
-        todo!("TODO")
+        let plans = SubstrateBlockPlans::take(self.tributary_txn, self.set, hash).expect(
+          "Transaction::SubstrateBlock locally provided but SubstrateBlockPlans wasn't populated",
+        );
+        for plan in plans {
+          TributaryDb::recognize_topic(
+            self.tributary_txn,
+            self.set,
+            Topic::Sign {
+              id: VariantSignId::Transaction(plan),
+              attempt: 0,
+              round: SigningProtocolRound::Preprocess,
+            },
+          );
+        }
       }
       Transaction::Batch { hash } => {
-        // Whitelist the signing of this batch, publishing our own preprocess
-        todo!("TODO")
+        // Whitelist the signing of this batch
+        TributaryDb::recognize_topic(
+          self.tributary_txn,
+          self.set,
+          Topic::Sign {
+            id: VariantSignId::Batch(hash),
+            attempt: 0,
+            round: SigningProtocolRound::Preprocess,
+          },
+        );
       }
 
       Transaction::SlashReport { slash_points, signed } => {

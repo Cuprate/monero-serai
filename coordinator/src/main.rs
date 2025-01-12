@@ -1,5 +1,5 @@
 use core::{ops::Deref, time::Duration};
-use std::{sync::Arc, time::Instant};
+use std::{sync::Arc, collections::HashMap, time::Instant};
 
 use zeroize::{Zeroize, Zeroizing};
 use rand_core::{RngCore, OsRng};
@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 
 use serai_client::{
   primitives::{NetworkId, PublicKey},
+  validator_sets::primitives::ValidatorSet,
   Serai,
 };
 use message_queue::{Service, client::MessageQueue};
@@ -23,7 +24,7 @@ use serai_task::{Task, TaskHandle, ContinuallyRan};
 
 use serai_cosign::{Faulted, SignedCosign, Cosigning};
 use serai_coordinator_substrate::{CanonicalEventStream, EphemeralEventStream, SignSlashReport};
-use serai_coordinator_tributary::Transaction;
+use serai_coordinator_tributary::{Signed, Transaction, SubstrateBlockPlans};
 
 mod db;
 use db::*;
@@ -178,7 +179,12 @@ async fn handle_processor_messages(
     match msg {
       messages::ProcessorMessage::KeyGen(msg) => match msg {
         messages::key_gen::ProcessorMessage::Participation { session, participation } => {
-          todo!("TODO Transaction::DkgParticipation")
+          let set = ValidatorSet { network, session };
+          TributaryTransactions::send(
+            &mut txn,
+            set,
+            &Transaction::DkgParticipation { participation, signed: Signed::default() },
+          );
         }
         messages::key_gen::ProcessorMessage::GeneratedKeyPair {
           session,
@@ -186,12 +192,28 @@ async fn handle_processor_messages(
           network_key,
         } => todo!("TODO Transaction::DkgConfirmationPreprocess"),
         messages::key_gen::ProcessorMessage::Blame { session, participant } => {
-          todo!("TODO Transaction::RemoveParticipant")
+          let set = ValidatorSet { network, session };
+          TributaryTransactions::send(
+            &mut txn,
+            set,
+            &Transaction::RemoveParticipant {
+              participant: todo!("TODO"),
+              signed: Signed::default(),
+            },
+          );
         }
       },
       messages::ProcessorMessage::Sign(msg) => match msg {
         messages::sign::ProcessorMessage::InvalidParticipant { session, participant } => {
-          todo!("TODO Transaction::RemoveParticipant")
+          let set = ValidatorSet { network, session };
+          TributaryTransactions::send(
+            &mut txn,
+            set,
+            &Transaction::RemoveParticipant {
+              participant: todo!("TODO"),
+              signed: Signed::default(),
+            },
+          );
         }
         messages::sign::ProcessorMessage::Preprocesses { id, preprocesses } => {
           todo!("TODO Transaction::Batch + Transaction::Sign")
@@ -211,7 +233,22 @@ async fn handle_processor_messages(
       },
       messages::ProcessorMessage::Substrate(msg) => match msg {
         messages::substrate::ProcessorMessage::SubstrateBlockAck { block, plans } => {
-          todo!("TODO Transaction::SubstrateBlock")
+          let mut by_session = HashMap::new();
+          for plan in plans {
+            by_session
+              .entry(plan.session)
+              .or_insert_with(|| Vec::with_capacity(1))
+              .push(plan.transaction_plan_id);
+          }
+          for (session, plans) in by_session {
+            let set = ValidatorSet { network, session };
+            SubstrateBlockPlans::set(&mut txn, set, block, &plans);
+            TributaryTransactions::send(
+              &mut txn,
+              set,
+              &Transaction::SubstrateBlock { hash: block },
+            );
+          }
         }
       },
     }
@@ -274,6 +311,8 @@ async fn main() {
       prune_tributary_db(to_cleanup);
       // Drain the cosign intents created for this set
       while !Cosigning::<Db>::intended_cosigns(&mut txn, to_cleanup).is_empty() {}
+      // Drain the transactions to publish for this set
+      while TributaryTransactions::try_recv(&mut txn, to_cleanup).is_some() {}
       // Remove the SignSlashReport notification
       SignSlashReport::try_recv(&mut txn, to_cleanup);
     }

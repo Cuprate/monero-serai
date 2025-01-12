@@ -198,6 +198,9 @@ create_db!(
     // If this block has already been cosigned.
     Cosigned: (set: ValidatorSet, substrate_block_hash: [u8; 32]) -> (),
 
+    // The plans to whitelist upon a `Transaction::SubstrateBlock` being included on-chain.
+    SubstrateBlockPlans: (set: ValidatorSet, substrate_block_hash: [u8; 32]) -> Vec<[u8; 32]>,
+
     // The weight accumulated for a topic.
     AccumulatedWeight: (set: ValidatorSet, topic: Topic) -> u64,
     // The entries accumulated for a topic, by validator.

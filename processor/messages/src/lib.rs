@@ -224,13 +224,13 @@ pub mod substrate {
   #[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
   pub struct PlanMeta {
     pub session: Session,
-    pub transaction: [u8; 32],
+    pub transaction_plan_id: [u8; 32],
   }
 
   #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
   pub enum ProcessorMessage {
     // TODO: Have the processor send this
-    SubstrateBlockAck { block: u64, plans: Vec<PlanMeta> },
+    SubstrateBlockAck { block: [u8; 32], plans: Vec<PlanMeta> },
   }
 }
 

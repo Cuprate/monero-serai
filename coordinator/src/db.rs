@@ -9,8 +9,8 @@ use serai_client::{
 };
 
 use serai_cosign::SignedCosign;
-
 use serai_coordinator_substrate::NewSetInformation;
+use serai_coordinator_tributary::Transaction;
 
 #[cfg(all(feature = "parity-db", not(feature = "rocksdb")))]
 pub(crate) type Db = serai_db::ParityDb;
@@ -81,9 +81,33 @@ create_db! {
 
 db_channel! {
   Coordinator {
-    // Tributaries to clean up upon reboot
-    TributaryCleanup: () -> ValidatorSet,
     // Cosigns we produced
     SignedCosigns: () -> SignedCosign,
+    // Tributaries to clean up upon reboot
+    TributaryCleanup: () -> ValidatorSet,
+  }
+}
+
+mod _internal_db {
+  use super::*;
+
+  db_channel! {
+    Coordinator {
+      // Tributary transactions to publish
+      TributaryTransactions: (set: ValidatorSet) -> Transaction,
+    }
+  }
+}
+
+pub(crate) struct TributaryTransactions;
+impl TributaryTransactions {
+  pub(crate) fn send(txn: &mut impl DbTxn, set: ValidatorSet, tx: &Transaction) {
+    // If this set has yet to be retired, send this transaction
+    if RetiredTributary::get(txn, set.network).map(|session| session.0) < Some(set.session.0) {
+      _internal_db::TributaryTransactions::send(txn, set, tx);
+    }
+  }
+  pub(crate) fn try_recv(txn: &mut impl DbTxn, set: ValidatorSet) -> Option<Transaction> {
+    _internal_db::TributaryTransactions::try_recv(txn, set)
   }
 }
