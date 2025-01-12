@@ -39,6 +39,8 @@ mod p2p {
   pub use serai_coordinator_libp2p_p2p::Libp2p;
 }
 
+mod serai;
+
 // Use a zeroizing allocator for this entire application
 // While secrets should already be zeroized, the presence of secret keys in a networked application
 // (at increased risk of OOB reads) justifies the performance hit in case any secrets weren't
