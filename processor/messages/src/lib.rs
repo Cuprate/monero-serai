@@ -11,6 +11,8 @@ use validator_sets_primitives::{Session, KeyPair, Slash};
 use coins_primitives::OutInstructionWithBalance;
 use in_instructions_primitives::SignedBatch;
 
+use serai_cosign::{CosignIntent, SignedCosign};
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
 pub struct SubstrateContext {
   pub serai_time: u64,
@@ -50,7 +52,8 @@ pub mod key_gen {
     }
   }
 
-  #[derive(Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+  // This set of messages is sent entirely and solely by serai-processor-key-gen.
+  #[derive(Clone, BorshSerialize, BorshDeserialize)]
   pub enum ProcessorMessage {
     // Participated in the specified key generation protocol.
     Participation { session: Session, participation: Vec<u8> },
@@ -141,7 +144,8 @@ pub mod sign {
     }
   }
 
-  #[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
+  // This set of messages is sent entirely and solely by serai-processor-frost-attempt-manager.
+  #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
   pub enum ProcessorMessage {
     // Participant sent an invalid message during the sign protocol.
     InvalidParticipant { session: Session, participant: Participant },
@@ -155,39 +159,25 @@ pub mod sign {
 pub mod coordinator {
   use super::*;
 
-  // TODO: Remove this for the one defined in serai-cosign
-  pub fn cosign_block_msg(block_number: u64, block: [u8; 32]) -> Vec<u8> {
-    const DST: &[u8] = b"Cosign";
-    let mut res = vec![u8::try_from(DST.len()).unwrap()];
-    res.extend(DST);
-    res.extend(block_number.to_le_bytes());
-    res.extend(block);
-    res
-  }
-
   #[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
   pub enum CoordinatorMessage {
     /// Cosign the specified Substrate block.
     ///
     /// This is sent by the Coordinator's Tributary scanner.
-    CosignSubstrateBlock { session: Session, block_number: u64, block: [u8; 32] },
+    CosignSubstrateBlock { session: Session, intent: CosignIntent },
     /// Sign the slash report for this session.
     ///
     /// This is sent by the Coordinator's Tributary scanner.
     SignSlashReport { session: Session, report: Vec<Slash> },
   }
 
-  #[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
-  pub struct PlanMeta {
-    pub session: Session,
-    pub id: [u8; 32],
-  }
-
-  #[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
+  // This set of messages is sent entirely and solely by serai-processor-bin's implementation of
+  // the signers::Coordinator trait.
+  // TODO: Move message creation into serai-processor-signers
+  #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
   pub enum ProcessorMessage {
-    CosignedBlock { block_number: u64, block: [u8; 32], signature: Vec<u8> },
+    CosignedBlock { cosign: SignedCosign },
     SignedBatch { batch: SignedBatch },
-    SubstrateBlockAck { block: u64, plans: Vec<PlanMeta> },
     SignedSlashReport { session: Session, signature: Vec<u8> },
   }
 }
@@ -231,17 +221,16 @@ pub mod substrate {
     },
   }
 
-  #[derive(Clone, PartialEq, Eq, Debug)]
-  pub enum ProcessorMessage {}
-  impl BorshSerialize for ProcessorMessage {
-    fn serialize<W: borsh::io::Write>(&self, _writer: &mut W) -> borsh::io::Result<()> {
-      unimplemented!()
-    }
+  #[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
+  pub struct PlanMeta {
+    pub session: Session,
+    pub transaction: [u8; 32],
   }
-  impl BorshDeserialize for ProcessorMessage {
-    fn deserialize_reader<R: borsh::io::Read>(_reader: &mut R) -> borsh::io::Result<Self> {
-      unimplemented!()
-    }
+
+  #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
+  pub enum ProcessorMessage {
+    // TODO: Have the processor send this
+    SubstrateBlockAck { block: u64, plans: Vec<PlanMeta> },
   }
 }
 
@@ -268,7 +257,7 @@ impl_from!(sign, CoordinatorMessage, Sign);
 impl_from!(coordinator, CoordinatorMessage, Coordinator);
 impl_from!(substrate, CoordinatorMessage, Substrate);
 
-#[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
+#[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
 pub enum ProcessorMessage {
   KeyGen(key_gen::ProcessorMessage),
   Sign(sign::ProcessorMessage),
@@ -331,8 +320,8 @@ impl CoordinatorMessage {
       CoordinatorMessage::Coordinator(msg) => {
         let (sub, id) = match msg {
           // We only cosign a block once, and Reattempt is a separate message
-          coordinator::CoordinatorMessage::CosignSubstrateBlock { block_number, .. } => {
-            (0, block_number.encode())
+          coordinator::CoordinatorMessage::CosignSubstrateBlock { intent, .. } => {
+            (0, intent.block_number.encode())
           }
           // We only sign one slash report, and Reattempt is a separate message
           coordinator::CoordinatorMessage::SignSlashReport { session, .. } => (1, session.encode()),
@@ -404,17 +393,26 @@ impl ProcessorMessage {
       }
       ProcessorMessage::Coordinator(msg) => {
         let (sub, id) = match msg {
-          coordinator::ProcessorMessage::CosignedBlock { block, .. } => (0, block.encode()),
+          coordinator::ProcessorMessage::CosignedBlock { cosign } => {
+            (0, cosign.cosign.block_hash.encode())
+          }
           coordinator::ProcessorMessage::SignedBatch { batch, .. } => (1, batch.batch.id.encode()),
-          coordinator::ProcessorMessage::SubstrateBlockAck { block, .. } => (2, block.encode()),
-          coordinator::ProcessorMessage::SignedSlashReport { session, .. } => (3, session.encode()),
+          coordinator::ProcessorMessage::SignedSlashReport { session, .. } => (2, session.encode()),
         };
 
         let mut res = vec![PROCESSOR_UID, TYPE_COORDINATOR_UID, sub];
         res.extend(&id);
         res
       }
-      ProcessorMessage::Substrate(_) => panic!("requesting intent for empty message type"),
+      ProcessorMessage::Substrate(msg) => {
+        let (sub, id) = match msg {
+          substrate::ProcessorMessage::SubstrateBlockAck { block, .. } => (0, block.encode()),
+        };
+
+        let mut res = vec![PROCESSOR_UID, TYPE_SUBSTRATE_UID, sub];
+        res.extend(&id);
+        res
+      }
     }
   }
 }

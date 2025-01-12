@@ -8,7 +8,7 @@ use serai_client::{
   validator_sets::primitives::{Session, ValidatorSet},
 };
 
-use serai_cosign::CosignIntent;
+use serai_cosign::SignedCosign;
 
 use serai_coordinator_substrate::NewSetInformation;
 
@@ -66,14 +66,24 @@ pub(crate) fn prune_tributary_db(set: ValidatorSet) {
 
 create_db! {
   Coordinator {
+    // The currently active Tributaries
     ActiveTributaries: () -> Vec<NewSetInformation>,
+    // The latest Tributary to have been retired for a network
+    // Since Tributaries are retired sequentially, this is informative to if any Tributary has been
+    // retired
     RetiredTributary: (network: NetworkId) -> Session,
+    // The last handled message from a Processor
+    LastProcessorMessage: (network: NetworkId) -> u64,
+    // Cosigns we produced and tried to intake yet incurred an error while doing so
+    ErroneousCosigns: () -> Vec<SignedCosign>,
   }
 }
 
 db_channel! {
   Coordinator {
+    // Tributaries to clean up upon reboot
     TributaryCleanup: () -> ValidatorSet,
-    PendingCosigns: (set: ValidatorSet) -> CosignIntent,
+    // Cosigns we produced
+    SignedCosigns: () -> SignedCosign,
   }
 }

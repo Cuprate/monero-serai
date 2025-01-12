@@ -88,7 +88,6 @@ impl<D: Db> ContinuallyRan for CosignIntendTask<D> {
         }
         let block_hash = block.hash();
         SubstrateBlockHash::set(&mut txn, block_number, &block_hash);
-        SubstrateBlockNumber::set(&mut txn, block_hash, &block_number);
 
         let global_session_for_this_block = LatestGlobalSessionIntended::get(&txn);
 

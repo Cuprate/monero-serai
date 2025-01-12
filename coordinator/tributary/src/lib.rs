@@ -24,7 +24,7 @@ use tributary_sdk::{
   Transaction as TributaryTransaction, Block, TributaryReader, P2p,
 };
 
-use serai_cosign::Cosigning;
+use serai_cosign::CosignIntent;
 use serai_coordinator_substrate::NewSetInformation;
 
 use messages::sign::VariantSignId;
@@ -45,17 +45,34 @@ impl ProcessorMessages {
   }
 }
 
-struct ScanBlock<'a, CD: Db, TD: Db, TDT: DbTxn, P: P2p> {
+/// The cosign intents.
+pub struct CosignIntents;
+impl CosignIntents {
+  /// Provide a CosignIntent for this Tributary.
+  ///
+  /// This must be done before the associated `Transaction::Cosign` is provided.
+  pub fn provide(txn: &mut impl DbTxn, set: ValidatorSet, intent: &CosignIntent) {
+    db::CosignIntents::set(txn, set, intent.block_hash, intent);
+  }
+  fn take(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+    substrate_block_hash: [u8; 32],
+  ) -> Option<CosignIntent> {
+    db::CosignIntents::take(txn, set, substrate_block_hash)
+  }
+}
+
+struct ScanBlock<'a, TD: Db, TDT: DbTxn, P: P2p> {
   _td: PhantomData<TD>,
   _p2p: PhantomData<P>,
-  cosign_db: &'a CD,
   tributary_txn: &'a mut TDT,
   set: ValidatorSet,
   validators: &'a [SeraiAddress],
   total_weight: u64,
   validator_weights: &'a HashMap<SeraiAddress, u64>,
 }
-impl<'a, CD: Db, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, CD, TD, TDT, P> {
+impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
   fn potentially_start_cosign(&mut self) {
     // Don't start a new cosigning instance if we're actively running one
     if TributaryDb::actively_cosigning(self.tributary_txn, self.set).is_some() {
@@ -74,20 +91,20 @@ impl<'a, CD: Db, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, CD, TD, TDT, P> {
       return;
     }
 
-    let Some(substrate_block_number) =
-      Cosigning::<CD>::finalized_block_number(self.cosign_db, latest_substrate_block_to_cosign)
-    else {
-      // This is a valid panic as we shouldn't be scanning this block if we didn't provide all
-      // Provided transactions within it, and the block to cosign is a Provided transaction
-      panic!("cosigning a block our cosigner didn't index")
-    };
+    let intent =
+      CosignIntents::take(self.tributary_txn, self.set, latest_substrate_block_to_cosign)
+        .expect("Transaction::Cosign locally provided but CosignIntents wasn't populated");
+    assert_eq!(
+      intent.block_hash, latest_substrate_block_to_cosign,
+      "provided CosignIntent wasn't saved by its block hash"
+    );
 
     // Mark us as actively cosigning
     TributaryDb::start_cosigning(
       self.tributary_txn,
       self.set,
       latest_substrate_block_to_cosign,
-      substrate_block_number,
+      intent.block_number,
     );
     // Send the message for the processor to start signing
     TributaryDb::send_message(
@@ -95,8 +112,7 @@ impl<'a, CD: Db, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, CD, TD, TDT, P> {
       self.set,
       messages::coordinator::CoordinatorMessage::CosignSubstrateBlock {
         session: self.set.session,
-        block_number: substrate_block_number,
-        block: latest_substrate_block_to_cosign,
+        intent,
       },
     );
   }
@@ -411,8 +427,7 @@ impl<'a, CD: Db, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, CD, TD, TDT, P> {
 }
 
 /// The task to scan the Tributary, populating `ProcessorMessages`.
-pub struct ScanTributaryTask<CD: Db, TD: Db, P: P2p> {
-  cosign_db: CD,
+pub struct ScanTributaryTask<TD: Db, P: P2p> {
   tributary_db: TD,
   set: ValidatorSet,
   validators: Vec<SeraiAddress>,
@@ -422,10 +437,9 @@ pub struct ScanTributaryTask<CD: Db, TD: Db, P: P2p> {
   _p2p: PhantomData<P>,
 }
 
-impl<CD: Db, TD: Db, P: P2p> ScanTributaryTask<CD, TD, P> {
+impl<TD: Db, P: P2p> ScanTributaryTask<TD, P> {
   /// Create a new instance of this task.
   pub fn new(
-    cosign_db: CD,
     tributary_db: TD,
     new_set: &NewSetInformation,
     tributary: TributaryReader<TD, Transaction>,
@@ -442,7 +456,6 @@ impl<CD: Db, TD: Db, P: P2p> ScanTributaryTask<CD, TD, P> {
     }
 
     ScanTributaryTask {
-      cosign_db,
       tributary_db,
       set: new_set.set,
       validators,
@@ -454,7 +467,7 @@ impl<CD: Db, TD: Db, P: P2p> ScanTributaryTask<CD, TD, P> {
   }
 }
 
-impl<CD: Db, TD: Db, P: P2p> ContinuallyRan for ScanTributaryTask<CD, TD, P> {
+impl<TD: Db, P: P2p> ContinuallyRan for ScanTributaryTask<TD, P> {
   fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
     async move {
       let (mut last_block_number, mut last_block_hash) =
@@ -486,7 +499,6 @@ impl<CD: Db, TD: Db, P: P2p> ContinuallyRan for ScanTributaryTask<CD, TD, P> {
         (ScanBlock {
           _td: PhantomData::<TD>,
           _p2p: PhantomData::<P>,
-          cosign_db: &self.cosign_db,
           tributary_txn: &mut tributary_txn,
           set: self.set,
           validators: &self.validators,

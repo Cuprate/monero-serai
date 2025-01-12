@@ -8998,6 +8998,7 @@ dependencies = [
  "hex",
  "parity-scale-codec",
  "serai-coins-primitives",
+ "serai-cosign",
  "serai-in-instructions-primitives",
  "serai-primitives",
  "serai-validator-sets-primitives",

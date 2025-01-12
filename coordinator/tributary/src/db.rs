@@ -9,6 +9,8 @@ use messages::sign::{VariantSignId, SignId};
 
 use serai_db::*;
 
+use serai_cosign::CosignIntent;
+
 use crate::transaction::SigningProtocolRound;
 
 /// A topic within the database which the group participates in
@@ -187,6 +189,8 @@ create_db!(
     // The slash points a validator has accrued, with u32::MAX representing a fatal slash.
     SlashPoints: (set: ValidatorSet, validator: SeraiAddress) -> u32,
 
+    // The cosign intent for a Substrate block
+    CosignIntents: (set: ValidatorSet, substrate_block_hash: [u8; 32]) -> CosignIntent,
     // The latest Substrate block to cosign.
     LatestSubstrateBlockToCosign: (set: ValidatorSet) -> [u8; 32],
     // The hash of the block we're actively cosigning.
