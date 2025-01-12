@@ -69,8 +69,7 @@ impl<P: P2p> ContinuallyRan for SubstrateTask<P> {
             intent: msg.intent(),
           };
           let msg = borsh::to_vec(&msg).unwrap();
-          // TODO: Make this fallible
-          self.message_queue.queue(metadata, msg).await;
+          self.message_queue.queue(metadata, msg).await?;
           txn.commit();
           made_progress = true;
         }
@@ -132,8 +131,7 @@ impl<P: P2p> ContinuallyRan for SubstrateTask<P> {
           intent: msg.intent(),
         };
         let msg = borsh::to_vec(&msg).unwrap();
-        // TODO: Make this fallible
-        self.message_queue.queue(metadata, msg).await;
+        self.message_queue.queue(metadata, msg).await?;
 
         // Commit the transaction for all of this
         txn.commit();

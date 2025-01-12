@@ -103,6 +103,7 @@ impl Coordinator {
     });
 
     // Spawn a task to send messages to the message-queue
+    // TODO: Define a proper task for this and remove use of queue_with_retry
     tokio::spawn({
       let mut db = db.clone();
       async move {
@@ -115,12 +116,12 @@ impl Coordinator {
                 to: Service::Coordinator,
                 intent: borsh::from_slice::<messages::ProcessorMessage>(&msg).unwrap().intent(),
               };
-              message_queue.queue(metadata, msg).await;
+              message_queue.queue_with_retry(metadata, msg).await;
               txn.commit();
             }
             None => {
               let _ =
-                tokio::time::timeout(core::time::Duration::from_secs(60), sent_message_recv.recv())
+                tokio::time::timeout(core::time::Duration::from_secs(6), sent_message_recv.recv())
                   .await;
             }
           }

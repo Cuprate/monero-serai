@@ -146,8 +146,7 @@ impl<TD: DbTrait> ContinuallyRan for TributaryProcessorMessagesTask<TD> {
           intent: msg.intent(),
         };
         let msg = borsh::to_vec(&msg).unwrap();
-        // TODO: Make this fallible
-        self.message_queue.queue(metadata, msg).await;
+        self.message_queue.queue(metadata, msg).await?;
         txn.commit();
         made_progress = true;
       }
