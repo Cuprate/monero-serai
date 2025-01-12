@@ -11,7 +11,7 @@ use serai_db::{DbTxn, Db};
 
 use messages::{sign::VariantSignId, coordinator::cosign_block_msg};
 
-use primitives::task::ContinuallyRan;
+use primitives::task::{DoesNotError, ContinuallyRan};
 
 use frost_attempt_manager::*;
 
@@ -51,7 +51,9 @@ impl<D: Db> CosignerTask<D> {
 }
 
 impl<D: Db> ContinuallyRan for CosignerTask<D> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = DoesNotError;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, DoesNotError>> {
     async move {
       let mut iterated = false;
 

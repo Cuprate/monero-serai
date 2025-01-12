@@ -95,6 +95,7 @@ impl Coordinator {
           message_queue.ack(Service::Coordinator, msg.id).await;
 
           // Fire that there's a new message
+          // This assumes the success path, not the just-rebooted-path
           received_message_send
             .send(())
             .expect("failed to tell the Coordinator there's a new message");

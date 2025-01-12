@@ -39,7 +39,9 @@ pub(crate) fn script_pubkey_for_on_chain_output(
 pub(crate) struct TxIndexTask<D: Db>(pub(crate) Rpc<D>);
 
 impl<D: Db> ContinuallyRan for TxIndexTask<D> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = String;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let latest_block_number = self
         .0

@@ -14,7 +14,7 @@ use serai_db::{Get, DbTxn, Db};
 
 use messages::sign::VariantSignId;
 
-use primitives::task::ContinuallyRan;
+use primitives::task::{DoesNotError, ContinuallyRan};
 use scanner::{BatchesToSign, AcknowledgedBatches};
 
 use frost_attempt_manager::*;
@@ -79,7 +79,9 @@ impl<D: Db, E: GroupEncoding> BatchSignerTask<D, E> {
 }
 
 impl<D: Db, E: Send + GroupEncoding> ContinuallyRan for BatchSignerTask<D, E> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = DoesNotError;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let mut iterated = false;
 

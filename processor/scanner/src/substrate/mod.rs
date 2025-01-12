@@ -5,7 +5,7 @@ use serai_db::{Get, DbTxn, Db};
 use serai_coins_primitives::{OutInstruction, OutInstructionWithBalance};
 
 use messages::substrate::ExecutedBatch;
-use primitives::task::ContinuallyRan;
+use primitives::task::{DoesNotError, ContinuallyRan};
 use crate::{
   db::{ScannerGlobalDb, SubstrateToEventualityDb, AcknowledgedBatches},
   index, batch, ScannerFeed, KeyFor,
@@ -50,7 +50,9 @@ impl<D: Db, S: ScannerFeed> SubstrateTask<D, S> {
 }
 
 impl<D: Db, S: ScannerFeed> ContinuallyRan for SubstrateTask<D, S> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = DoesNotError;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let mut made_progress = false;
       loop {

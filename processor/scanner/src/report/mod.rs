@@ -4,7 +4,7 @@ use serai_db::{DbTxn, Db};
 
 use serai_validator_sets_primitives::Session;
 
-use primitives::task::ContinuallyRan;
+use primitives::task::{DoesNotError, ContinuallyRan};
 use crate::{
   db::{BatchData, BatchToReportDb, BatchesToSign},
   substrate, ScannerFeed,
@@ -27,7 +27,9 @@ impl<D: Db, S: ScannerFeed> ReportTask<D, S> {
 }
 
 impl<D: Db, S: ScannerFeed> ContinuallyRan for ReportTask<D, S> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = DoesNotError;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let mut made_progress = false;
       loop {

@@ -7,7 +7,10 @@ use serai_db::{DbTxn, Db};
 
 use serai_in_instructions_primitives::{MAX_BATCH_SIZE, Batch};
 
-use primitives::{EncodableG, task::ContinuallyRan};
+use primitives::{
+  EncodableG,
+  task::{DoesNotError, ContinuallyRan},
+};
 use crate::{
   db::{Returnable, ScannerGlobalDb, InInstructionData, ScanToBatchDb, BatchData, BatchToReportDb},
   index,
@@ -60,7 +63,9 @@ impl<D: Db, S: ScannerFeed> BatchTask<D, S> {
 }
 
 impl<D: Db, S: ScannerFeed> ContinuallyRan for BatchTask<D, S> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = DoesNotError;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let highest_batchable = {
         // Fetch the next to scan block

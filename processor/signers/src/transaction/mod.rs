@@ -92,7 +92,9 @@ impl<D: Db, ST: SignableTransaction, P: TransactionPublisher<TransactionFor<ST>>
 impl<D: Db, ST: SignableTransaction, P: TransactionPublisher<TransactionFor<ST>>> ContinuallyRan
   for TransactionSignerTask<D, ST, P>
 {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = P::EphemeralError;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async {
       let mut iterated = false;
 
@@ -222,11 +224,7 @@ impl<D: Db, ST: SignableTransaction, P: TransactionPublisher<TransactionFor<ST>>
           let tx = TransactionFor::<ST>::read(&mut tx_buf).unwrap();
           assert!(tx_buf.is_empty());
 
-          self
-            .publisher
-            .publish(tx)
-            .await
-            .map_err(|e| format!("couldn't re-broadcast transactions: {e:?}"))?;
+          self.publisher.publish(tx).await?;
         }
 
         self.last_publication = Instant::now();

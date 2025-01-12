@@ -5,7 +5,7 @@ use rand_core::{RngCore, OsRng};
 
 use tokio::sync::mpsc;
 
-use serai_client::Serai;
+use serai_client::{SeraiError, Serai};
 
 use libp2p::{
   core::multiaddr::{Protocol, Multiaddr},
@@ -50,7 +50,9 @@ impl ContinuallyRan for DialTask {
   const DELAY_BETWEEN_ITERATIONS: u64 = 5 * 60;
   const MAX_DELAY_BETWEEN_ITERATIONS: u64 = 10 * 60;
 
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = SeraiError;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       self.validators.update().await?;
 
@@ -83,8 +85,7 @@ impl ContinuallyRan for DialTask {
               .unwrap_or(0)
               .saturating_sub(1))
         {
-          let mut potential_peers =
-            self.serai.p2p_validators(network).await.map_err(|e| format!("{e:?}"))?;
+          let mut potential_peers = self.serai.p2p_validators(network).await?;
           for _ in 0 .. (TARGET_PEERS_PER_NETWORK - peer_count) {
             if potential_peers.is_empty() {
               break;

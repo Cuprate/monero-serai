@@ -39,7 +39,9 @@ impl<D: Db> EphemeralEventStream<D> {
 }
 
 impl<D: Db> ContinuallyRan for EphemeralEventStream<D> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = String;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let next_block = NextBlock::get(&self.db).unwrap_or(0);
       let latest_finalized_block =

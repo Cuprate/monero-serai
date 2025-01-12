@@ -15,7 +15,7 @@ use serai_client::validator_sets::primitives::ValidatorSet;
 
 use tributary_sdk::{TransactionKind, TransactionError, ProvidedError, TransactionTrait, Tributary};
 
-use serai_task::{Task, TaskHandle, ContinuallyRan};
+use serai_task::{Task, TaskHandle, DoesNotError, ContinuallyRan};
 
 use message_queue::{Service, Metadata, client::MessageQueue};
 
@@ -76,7 +76,9 @@ pub(crate) struct ProvideCosignCosignedTransactionsTask<CD: DbTrait, TD: DbTrait
 impl<CD: DbTrait, TD: DbTrait, P: P2p> ContinuallyRan
   for ProvideCosignCosignedTransactionsTask<CD, TD, P>
 {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = String;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let mut made_progress = false;
 
@@ -154,7 +156,9 @@ pub(crate) struct AddTributaryTransactionsTask<CD: DbTrait, TD: DbTrait, P: P2p>
   key: Zeroizing<<Ristretto as Ciphersuite>::F>,
 }
 impl<CD: DbTrait, TD: DbTrait, P: P2p> ContinuallyRan for AddTributaryTransactionsTask<CD, TD, P> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = DoesNotError;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let mut made_progress = false;
       loop {
@@ -212,7 +216,9 @@ pub(crate) struct TributaryProcessorMessagesTask<TD: DbTrait> {
   message_queue: Arc<MessageQueue>,
 }
 impl<TD: DbTrait> ContinuallyRan for TributaryProcessorMessagesTask<TD> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = String; // TODO
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let mut made_progress = false;
       loop {
@@ -242,7 +248,9 @@ pub(crate) struct SignSlashReportTask<CD: DbTrait, TD: DbTrait, P: P2p> {
   key: Zeroizing<<Ristretto as Ciphersuite>::F>,
 }
 impl<CD: DbTrait, TD: DbTrait, P: P2p> ContinuallyRan for SignSlashReportTask<CD, TD, P> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = DoesNotError;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let mut txn = self.db.txn();
       let Some(()) = SignSlashReport::try_recv(&mut txn, self.set.set) else { return Ok(false) };

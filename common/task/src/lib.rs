@@ -2,7 +2,11 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 
-use core::{future::Future, time::Duration};
+use core::{
+  fmt::{self, Debug},
+  future::Future,
+  time::Duration,
+};
 
 use tokio::sync::mpsc;
 
@@ -60,6 +64,15 @@ impl TaskHandle {
   }
 }
 
+/// An enum which can't be constructed, representing that the task does not error.
+pub enum DoesNotError {}
+impl Debug for DoesNotError {
+  fn fmt(&self, _: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    // This type can't be constructed so we'll never have a `&self` to call this fn with
+    unreachable!()
+  }
+}
+
 /// A task to be continually ran.
 pub trait ContinuallyRan: Sized + Send {
   /// The amount of seconds before this task should be polled again.
@@ -69,11 +82,14 @@ pub trait ContinuallyRan: Sized + Send {
   /// Upon error, the amount of time waited will be linearly increased until this limit.
   const MAX_DELAY_BETWEEN_ITERATIONS: u64 = 120;
 
+  /// The error potentially yielded upon running an iteration of this task.
+  type Error: Debug;
+
   /// Run an iteration of the task.
   ///
   /// If this returns `true`, all dependents of the task will immediately have a new iteration ran
   /// (without waiting for whatever timer they were already on).
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>>;
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>>;
 
   /// Continually run the task.
   fn continually_run(
@@ -115,12 +131,17 @@ pub trait ContinuallyRan: Sized + Send {
             }
           }
           Err(e) => {
-            log::warn!("{}", e);
+            log::warn!("{e:?}");
             increase_sleep_before_next_task(&mut current_sleep_before_next_task);
           }
         }
 
         // Don't run the task again for another few seconds UNLESS told to run now
+        /*
+          We could replace tokio::mpsc with async_channel, tokio::time::sleep with
+          patchable_async_sleep::sleep, and tokio::select with futures_lite::future::or
+          It isn't worth the effort when patchable_async_sleep::sleep will still resolve to tokio
+        */
         tokio::select! {
           () = tokio::time::sleep(Duration::from_secs(current_sleep_before_next_task)) => {},
           msg = task.run_now.recv() => {

@@ -61,7 +61,9 @@ pub(crate) struct CosignIntendTask<D: Db> {
 }
 
 impl<D: Db> ContinuallyRan for CosignIntendTask<D> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = String;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let start_block_number = ScanCosignFrom::get(&self.db).unwrap_or(1);
       let latest_block_number =

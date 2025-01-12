@@ -13,7 +13,7 @@ use serai_db::{DbTxn, Db};
 
 use messages::sign::VariantSignId;
 
-use primitives::task::ContinuallyRan;
+use primitives::task::{DoesNotError, ContinuallyRan};
 use scanner::ScannerFeed;
 
 use frost_attempt_manager::*;
@@ -52,7 +52,9 @@ impl<D: Db, S: ScannerFeed> SlashReportSignerTask<D, S> {
 }
 
 impl<D: Db, S: ScannerFeed> ContinuallyRan for SlashReportSignerTask<D, S> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = DoesNotError;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let mut iterated = false;
 

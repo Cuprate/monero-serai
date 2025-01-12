@@ -98,7 +98,9 @@ impl<D: Db, S: ScannerFeed> ScanTask<D, S> {
 }
 
 impl<D: Db, S: ScannerFeed> ContinuallyRan for ScanTask<D, S> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = String;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       // Fetch the safe to scan block
       let latest_scannable =

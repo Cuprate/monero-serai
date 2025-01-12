@@ -4,7 +4,7 @@ use std::{
   collections::{HashSet, HashMap},
 };
 
-use serai_client::{primitives::NetworkId, validator_sets::primitives::Session, Serai};
+use serai_client::{primitives::NetworkId, validator_sets::primitives::Session, SeraiError, Serai};
 
 use serai_task::{Task, ContinuallyRan};
 
@@ -50,9 +50,8 @@ impl Validators {
   async fn session_changes(
     serai: impl Borrow<Serai>,
     sessions: impl Borrow<HashMap<NetworkId, Session>>,
-  ) -> Result<Vec<(NetworkId, Session, HashSet<PeerId>)>, String> {
-    let temporal_serai =
-      serai.borrow().as_of_latest_finalized_block().await.map_err(|e| format!("{e:?}"))?;
+  ) -> Result<Vec<(NetworkId, Session, HashSet<PeerId>)>, SeraiError> {
+    let temporal_serai = serai.borrow().as_of_latest_finalized_block().await?;
     let temporal_serai = temporal_serai.validator_sets();
 
     let mut session_changes = vec![];
@@ -69,7 +68,7 @@ impl Validators {
           let session = match temporal_serai.session(network).await {
             Ok(Some(session)) => session,
             Ok(None) => return Ok(None),
-            Err(e) => return Err(format!("{e:?}")),
+            Err(e) => return Err(e),
           };
 
           if sessions.get(&network) == Some(&session) {
@@ -81,7 +80,7 @@ impl Validators {
                 session,
                 validators.into_iter().map(peer_id_from_public).collect(),
               ))),
-              Err(e) => Err(format!("{e:?}")),
+              Err(e) => Err(e),
             }
           }
         });
@@ -147,7 +146,7 @@ impl Validators {
   }
 
   /// Update the view of the validators.
-  pub(crate) async fn update(&mut self) -> Result<(), String> {
+  pub(crate) async fn update(&mut self) -> Result<(), SeraiError> {
     let session_changes = Self::session_changes(&*self.serai, &self.sessions).await?;
     self.incorporate_session_changes(session_changes);
     Ok(())
@@ -200,13 +199,13 @@ impl ContinuallyRan for UpdateValidatorsTask {
   const DELAY_BETWEEN_ITERATIONS: u64 = 60;
   const MAX_DELAY_BETWEEN_ITERATIONS: u64 = 5 * 60;
 
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = SeraiError;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let session_changes = {
         let validators = self.validators.read().await;
-        Validators::session_changes(validators.serai.clone(), validators.sessions.clone())
-          .await
-          .map_err(|e| format!("{e:?}"))?
+        Validators::session_changes(validators.serai.clone(), validators.sessions.clone()).await?
       };
       self.validators.write().await.incorporate_session_changes(session_changes);
       Ok(true)

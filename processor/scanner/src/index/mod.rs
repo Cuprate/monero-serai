@@ -58,7 +58,9 @@ impl<D: Db, S: ScannerFeed> IndexTask<D, S> {
 }
 
 impl<D: Db, S: ScannerFeed> ContinuallyRan for IndexTask<D, S> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = String;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       // Fetch the latest finalized block
       let our_latest_finalized = IndexDb::latest_finalized_block(&self.db)

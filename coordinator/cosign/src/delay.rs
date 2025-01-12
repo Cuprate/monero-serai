@@ -2,7 +2,7 @@ use core::future::Future;
 use std::time::{Duration, SystemTime};
 
 use serai_db::*;
-use serai_task::ContinuallyRan;
+use serai_task::{DoesNotError, ContinuallyRan};
 
 use crate::evaluator::CosignedBlocks;
 
@@ -25,7 +25,9 @@ pub(crate) struct CosignDelayTask<D: Db> {
 }
 
 impl<D: Db> ContinuallyRan for CosignDelayTask<D> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = DoesNotError;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let mut made_progress = false;
       loop {

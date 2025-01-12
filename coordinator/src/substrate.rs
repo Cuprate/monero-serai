@@ -32,7 +32,8 @@ pub(crate) struct SubstrateTask<P: P2p> {
 }
 
 impl<P: P2p> ContinuallyRan for SubstrateTask<P> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = String; // TODO
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let mut made_progress = false;
 

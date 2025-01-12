@@ -20,7 +20,9 @@ pub struct PublishSlashReportTask<CD: DbTrait> {
   serai: Arc<Serai>,
 }
 impl<CD: DbTrait> ContinuallyRan for PublishSlashReportTask<CD> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = String;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let mut made_progress = false;
       for network in serai_client::primitives::NETWORKS {

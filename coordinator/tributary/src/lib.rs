@@ -512,7 +512,9 @@ impl<TD: Db, P: P2p> ScanTributaryTask<TD, P> {
 }
 
 impl<TD: Db, P: P2p> ContinuallyRan for ScanTributaryTask<TD, P> {
-  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, String>> {
+  type Error = String;
+
+  fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
       let (mut last_block_number, mut last_block_hash) =
         TributaryDb::last_handled_tributary_block(&self.tributary_db, self.set)
