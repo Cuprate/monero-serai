@@ -352,8 +352,11 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
             // Create the resulting slash report
             let mut slash_report = vec![];
             for (validator, points) in self.validators.iter().copied().zip(amortized_slash_report) {
-              if points != 0 {
-                slash_report.push(Slash { key: validator.into(), points });
+              // TODO: Natively store this as a `Slash`
+              if points == u32::MAX {
+                slash_report.push(Slash::Fatal);
+              } else {
+                slash_report.push(Slash::Points(points));
               }
             }
             assert!(slash_report.len() <= f);

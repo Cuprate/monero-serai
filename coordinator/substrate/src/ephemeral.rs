@@ -159,8 +159,9 @@ impl<D: Db> ContinuallyRan for EphemeralEventStream<D> {
               Err("validator's weight exceeded u16::MAX".to_string())?
             };
 
+            // Do the summation in u32 so we don't risk a u16 overflow
             let total_weight = validators.iter().map(|(_, weight)| u32::from(*weight)).sum::<u32>();
-            if total_weight > MAX_KEY_SHARES_PER_SET {
+            if total_weight > u32::from(MAX_KEY_SHARES_PER_SET) {
               Err(format!(
                 "{set:?} has {total_weight} key shares when the max is {MAX_KEY_SHARES_PER_SET}"
               ))?;

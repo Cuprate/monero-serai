@@ -242,7 +242,7 @@ impl<'a> SeraiValidatorSets<'a> {
     // (50 * (32 + 4)) > (150 * 4)
     slashes: sp_runtime::BoundedVec<
       (SeraiAddress, u32),
-      sp_core::ConstU32<{ primitives::MAX_KEY_SHARES_PER_SET / 3 }>,
+      sp_core::ConstU32<{ primitives::MAX_KEY_SHARES_PER_SET_U32 / 3 }>,
     >,
     signature: Signature,
   ) -> Transaction {

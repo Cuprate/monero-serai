@@ -21,7 +21,7 @@ pub enum Call {
   },
   report_slashes {
     network: NetworkId,
-    slashes: BoundedVec<(SeraiAddress, u32), ConstU32<{ MAX_KEY_SHARES_PER_SET / 3 }>>,
+    slashes: BoundedVec<(SeraiAddress, u32), ConstU32<{ MAX_KEY_SHARES_PER_SET_U32 / 3 }>>,
     signature: Signature,
   },
   allocate {

@@ -23,7 +23,7 @@ pub mod pallet {
   use economic_security_pallet::{Config as EconomicSecurityConfig, Pallet as EconomicSecurity};
 
   use serai_primitives::*;
-  use validator_sets_primitives::{MAX_KEY_SHARES_PER_SET, Session};
+  use validator_sets_primitives::{MAX_KEY_SHARES_PER_SET_U32, Session};
   pub use emissions_primitives as primitives;
   use primitives::*;
 
@@ -74,7 +74,7 @@ pub mod pallet {
     _,
     Identity,
     NetworkId,
-    BoundedVec<(PublicKey, u64), ConstU32<{ MAX_KEY_SHARES_PER_SET }>>,
+    BoundedVec<(PublicKey, u64), ConstU32<{ MAX_KEY_SHARES_PER_SET_U32 }>>,
     OptionQuery,
   >;
 

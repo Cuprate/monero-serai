@@ -1,5 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
+use core::time::Duration;
+
 #[cfg(feature = "std")]
 use zeroize::Zeroize;
 
@@ -13,20 +15,30 @@ use borsh::{BorshSerialize, BorshDeserialize};
 #[cfg(feature = "serde")]
 use serde::{Serialize, Deserialize};
 
-use sp_core::{ConstU32, sr25519::Public, bounded::BoundedVec};
+use sp_core::{ConstU32, bounded::BoundedVec, sr25519::Public};
 #[cfg(not(feature = "std"))]
 use sp_std::vec::Vec;
 
 use serai_primitives::NetworkId;
 
-/// The maximum amount of key shares per set.
-pub const MAX_KEY_SHARES_PER_SET: u32 = 150;
+mod slash_points;
+pub use slash_points::*;
+
+/// The expected duration for a session.
+// 1 week
+pub const SESSION_LENGTH: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+/// The maximum length for a key.
 // Support keys up to 96 bytes (BLS12-381 G2).
 pub const MAX_KEY_LEN: u32 = 96;
 
+/// The maximum amount of key shares per set.
+pub const MAX_KEY_SHARES_PER_SET: u16 = 150;
+pub const MAX_KEY_SHARES_PER_SET_U32: u32 = MAX_KEY_SHARES_PER_SET as u32;
+
 /// The type used to identify a specific session of validators.
 #[derive(
-  Clone, Copy, PartialEq, Eq, Hash, Default, Debug, Encode, Decode, TypeInfo, MaxEncodedLen,
+  Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Encode, Decode, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(Zeroize))]
 #[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
@@ -34,7 +46,9 @@ pub const MAX_KEY_LEN: u32 = 96;
 pub struct Session(pub u32);
 
 /// The type used to identify a specific validator set during a specific session.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Encode, Decode, TypeInfo, MaxEncodedLen)]
+#[derive(
+  Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Encode, Decode, TypeInfo, MaxEncodedLen,
+)]
 #[cfg_attr(feature = "std", derive(Zeroize))]
 #[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -43,13 +57,13 @@ pub struct ValidatorSet {
   pub network: NetworkId,
 }
 
-type MaxKeyLen = ConstU32<MAX_KEY_LEN>;
 /// The type representing a Key from an external network.
-pub type ExternalKey = BoundedVec<u8, MaxKeyLen>;
+pub type ExternalKey = BoundedVec<u8, ConstU32<MAX_KEY_LEN>>;
 
 /// The key pair for a validator set.
 ///
-/// This is their Ristretto key, used for signing Batches, and their key on the external network.
+/// This is their Ristretto key, used for publishing data onto Serai, and their key on the external
+/// network.
 #[derive(Clone, PartialEq, Eq, Debug, Encode, Decode, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -81,12 +95,12 @@ impl Zeroize for KeyPair {
 
 /// The MuSig context for a validator set.
 pub fn musig_context(set: ValidatorSet) -> Vec<u8> {
-  [b"ValidatorSets-musig_key".as_ref(), &set.encode()].concat()
+  (b"ValidatorSets-musig_key".as_ref(), set).encode()
 }
 
 /// The MuSig public key for a validator set.
 ///
-/// This function panics on invalid input.
+/// This function panics on invalid input, per the definition of `dkg::musig::musig_key`.
 pub fn musig_key(set: ValidatorSet, set_keys: &[Public]) -> Public {
   let mut keys = Vec::new();
   for key in set_keys {
@@ -98,31 +112,9 @@ pub fn musig_key(set: ValidatorSet, set_keys: &[Public]) -> Public {
   Public(dkg::musig::musig_key::<Ristretto>(&musig_context(set), &keys).unwrap().to_bytes())
 }
 
-/// The message for the set_keys signature.
+/// The message for the `set_keys` signature.
 pub fn set_keys_message(set: &ValidatorSet, key_pair: &KeyPair) -> Vec<u8> {
   (b"ValidatorSets-set_keys", set, key_pair).encode()
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Encode, Decode, TypeInfo, MaxEncodedLen)]
-#[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Slash {
-  #[cfg_attr(
-    feature = "borsh",
-    borsh(
-      serialize_with = "serai_primitives::borsh_serialize_public",
-      deserialize_with = "serai_primitives::borsh_deserialize_public"
-    )
-  )]
-  pub key: Public,
-  pub points: u32,
-}
-#[derive(Clone, PartialEq, Eq, Debug, Encode, Decode, TypeInfo, MaxEncodedLen)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct SlashReport(pub BoundedVec<Slash, ConstU32<{ MAX_KEY_SHARES_PER_SET / 3 }>>);
-
-pub fn report_slashes_message(set: &ValidatorSet, slashes: &SlashReport) -> Vec<u8> {
-  (b"ValidatorSets-report_slashes", set, slashes).encode()
 }
 
 /// For a set of validators whose key shares may exceed the maximum, reduce until they equal the

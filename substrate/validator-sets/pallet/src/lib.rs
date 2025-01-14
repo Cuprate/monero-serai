@@ -141,7 +141,7 @@ pub mod pallet {
     _,
     Identity,
     NetworkId,
-    BoundedVec<(Public, u64), ConstU32<{ MAX_KEY_SHARES_PER_SET }>>,
+    BoundedVec<(Public, u64), ConstU32<{ MAX_KEY_SHARES_PER_SET_U32 }>>,
     OptionQuery,
   >;
   /// The validators selected to be in-set, regardless of if removed.
@@ -402,7 +402,7 @@ pub mod pallet {
 
       // Clear the current InSet
       assert_eq!(
-        InSet::<T>::clear_prefix(network, MAX_KEY_SHARES_PER_SET, None).maybe_cursor,
+        InSet::<T>::clear_prefix(network, MAX_KEY_SHARES_PER_SET_U32, None).maybe_cursor,
         None
       );
 
@@ -412,11 +412,11 @@ pub mod pallet {
       {
         let mut iter = SortedAllocationsIter::<T>::new(network);
         let mut key_shares = 0;
-        while key_shares < u64::from(MAX_KEY_SHARES_PER_SET) {
+        while key_shares < u64::from(MAX_KEY_SHARES_PER_SET_U32) {
           let Some((key, amount)) = iter.next() else { break };
 
           let these_key_shares =
-            (amount.0 / allocation_per_key_share).min(u64::from(MAX_KEY_SHARES_PER_SET));
+            (amount.0 / allocation_per_key_share).min(u64::from(MAX_KEY_SHARES_PER_SET_U32));
           participants.push((key, these_key_shares));
 
           key_shares += these_key_shares;
@@ -535,7 +535,7 @@ pub mod pallet {
           top = Some(key_shares);
         }
 
-        if key_shares > u64::from(MAX_KEY_SHARES_PER_SET) {
+        if key_shares > u64::from(MAX_KEY_SHARES_PER_SET_U32) {
           break;
         }
       }
@@ -547,7 +547,7 @@ pub mod pallet {
       // post_amortization_key_shares_for_top_validator yields what the top validator's key shares
       // would be after such a reduction, letting us evaluate this correctly
       let top = post_amortization_key_shares_for_top_validator(validators_len, top, key_shares);
-      (top * 3) < key_shares.min(MAX_KEY_SHARES_PER_SET.into())
+      (top * 3) < key_shares.min(MAX_KEY_SHARES_PER_SET_U32.into())
     }
 
     fn increase_allocation(
@@ -586,7 +586,7 @@ pub mod pallet {
 
       // The above is_bft calls are only used to check a BFT net doesn't become non-BFT
       // Check here if this call would prevent a non-BFT net from *ever* becoming BFT
-      if (new_allocation / allocation_per_key_share) >= (MAX_KEY_SHARES_PER_SET / 3).into() {
+      if (new_allocation / allocation_per_key_share) >= (MAX_KEY_SHARES_PER_SET_U32 / 3).into() {
         Err(Error::<T>::AllocationWouldPreventFaultTolerance)?;
       }
 
@@ -1010,7 +1010,7 @@ pub mod pallet {
     pub fn report_slashes(
       origin: OriginFor<T>,
       network: NetworkId,
-      slashes: BoundedVec<(Public, u32), ConstU32<{ MAX_KEY_SHARES_PER_SET / 3 }>>,
+      slashes: BoundedVec<(Public, u32), ConstU32<{ MAX_KEY_SHARES_PER_SET_U32 / 3 }>>,
       signature: Signature,
     ) -> DispatchResult {
       ensure_none(origin)?;
@@ -1209,7 +1209,7 @@ pub mod pallet {
 
           ValidTransaction::with_tag_prefix("ValidatorSets")
             .and_provides((1, set))
-            .longevity(MAX_KEY_SHARES_PER_SET.into())
+            .longevity(MAX_KEY_SHARES_PER_SET_U32.into())
             .propagate(true)
             .build()
         }

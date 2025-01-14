@@ -301,14 +301,14 @@ impl TransactionTrait for Transaction {
       Transaction::Batch { .. } => {}
 
       Transaction::Sign { data, .. } => {
-        if data.len() > usize::try_from(MAX_KEY_SHARES_PER_SET).unwrap() {
+        if data.len() > usize::from(MAX_KEY_SHARES_PER_SET) {
           Err(TransactionError::InvalidContent)?
         }
         // TODO: MAX_SIGN_LEN
       }
 
       Transaction::SlashReport { slash_points, .. } => {
-        if slash_points.len() > usize::try_from(MAX_KEY_SHARES_PER_SET).unwrap() {
+        if slash_points.len() > usize::from(MAX_KEY_SHARES_PER_SET) {
           Err(TransactionError::InvalidContent)?
         }
       }
