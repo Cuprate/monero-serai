@@ -84,12 +84,17 @@ impl Slash {
           - Hours 12-24 are penalized as if they're hours 12-36.
           - Hours 24-36 are penalized as if they're hours 36-96.
           - Hours 36-48 are penalized as if they're hours 96-168.
+
+          /* Commented, see below explanation of why.
           - Hours 48-168 are penalized for 0-2% of stake.
           - 168-336 hours of slashes, for a session only lasting 168 hours, is penalized for 2-10%
             of stake.
 
           This means a validator offline has to be offline for more than two days to start having
           their stake slashed.
+          */
+
+          This means a validator offline for two days will not earn any rewards for that session.
         */
 
         const MULTIPLIERS: [u64; 4] = [1, 2, 5, 6];
@@ -117,6 +122,7 @@ impl Slash {
             })
         };
 
+        /*
         let slash_points_for_entire_session =
           SESSION_LENGTH.as_secs() / downtime_per_slash_point.as_secs();
 
@@ -159,6 +165,32 @@ impl Slash {
             .checked_div(u128::from(slash_points_for_entire_session))
             .unwrap_or(0)
         };
+        */
+
+        /*
+          We do not slash for being offline/disruptive at this time. Doing so allows an adversary
+          to DoS nodes to not just take them offline, yet also take away their stake. This isn't
+          preferable to the increased incentive to properly maintain a node when the rewards should
+          already be sufficient for that purpose.
+
+          Validators also shouldn't be able to be so disruptive due to their limiting upon
+          disruption *while its ongoing*. Slashes as a post-response, while an arguably worthwhile
+          economic penalty, can never be a response in the moment (as necessary to actually handle
+          the disruption).
+
+          If stake slashing was to be re-enabled, the percentage of stake which is eligible for
+          slashing should be variable to how close we are to losing liveness. This would mean if
+          less than 10% of validators are offline, no stake is slashes. If 10% are, 2% is eligible.
+          If 20% are, 5% is eligible. If 30% are, 10% is eligible.
+
+          (or similar)
+
+          This would mean that a DoS is insufficient to cause a validator to lose their stake.
+          Instead, a coordinated DoS against multiple Serai validators would be needed,
+          strengthening our assumptions.
+        */
+        let offline_slash = 0;
+        let disruptive_slash = 0;
 
         // The penalty is all slashes, but never more than the validator's balance
         // (handles any rounding errors which may or may not exist)
@@ -225,6 +257,7 @@ fn test_penalty() {
       Amount(168)
     );
 
+    /*
     // A full week of slash points should slash 2%
     let week_of_slash_points = 14 * twelve_hours_of_slash_points;
     assert_eq!(
@@ -242,6 +275,13 @@ fn test_penalty() {
     assert_eq!(
       Slash::Points(u32::MAX).penalty(validators, Amount(1000), Amount(168)),
       Amount(100 + 168)
+    );
+    */
+
+    // Anything greater should still only slash the rewards
+    assert_eq!(
+      Slash::Points(u32::MAX).penalty(validators, Amount(u64::MAX), Amount(168)),
+      Amount(168)
     );
   }
 }
