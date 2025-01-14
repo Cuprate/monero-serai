@@ -238,6 +238,8 @@ impl<'a> SeraiValidatorSets<'a> {
 
   pub fn report_slashes(
     network: NetworkId,
+    // TODO: This bounds a maximum length but takes more space than just publishing all the u32s
+    // (50 * (32 + 4)) > (150 * 4)
     slashes: sp_runtime::BoundedVec<
       (SeraiAddress, u32),
       sp_core::ConstU32<{ primitives::MAX_KEY_SHARES_PER_SET / 3 }>,

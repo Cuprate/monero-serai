@@ -6,8 +6,10 @@ use scale::{Encode, Decode};
 use borsh::{io, BorshSerialize, BorshDeserialize};
 
 use serai_client::{
-  primitives::{PublicKey, NetworkId},
-  validator_sets::primitives::ValidatorSet,
+  primitives::{NetworkId, PublicKey, Signature, SeraiAddress},
+  validator_sets::primitives::{Session, ValidatorSet, KeyPair},
+  in_instructions::primitives::SignedBatch,
+  Transaction,
 };
 
 use serai_db::*;
@@ -16,6 +18,13 @@ mod canonical;
 pub use canonical::CanonicalEventStream;
 mod ephemeral;
 pub use ephemeral::EphemeralEventStream;
+
+mod set_keys;
+pub use set_keys::SetKeysTask;
+mod publish_batch;
+pub use publish_batch::PublishBatchTask;
+mod publish_slash_report;
+pub use publish_slash_report::PublishSlashReportTask;
 
 fn borsh_serialize_validators<W: io::Write>(
   validators: &Vec<(PublicKey, u16)>,
@@ -53,11 +62,7 @@ pub struct NewSetInformation {
 }
 
 mod _public_db {
-  use serai_client::{primitives::NetworkId, validator_sets::primitives::ValidatorSet};
-
-  use serai_db::*;
-
-  use crate::NewSetInformation;
+  use super::*;
 
   db_channel!(
     CoordinatorSubstrate {
@@ -68,6 +73,18 @@ mod _public_db {
       NewSet: () -> NewSetInformation,
       // Potentially relevant sign slash report, from an ephemeral event stream
       SignSlashReport: (set: ValidatorSet) -> (),
+
+      // Signed batches to publish onto the Serai network
+      SignedBatches: (network: NetworkId) -> SignedBatch,
+    }
+  );
+
+  create_db!(
+    CoordinatorSubstrate {
+      // Keys to set on the Serai network
+      Keys: (network: NetworkId) -> (Session, Vec<u8>),
+      // Slash reports to publish onto the Serai network
+      SlashReports: (network: NetworkId) -> (Session, Vec<u8>),
     }
   );
 }
@@ -116,5 +133,96 @@ impl SignSlashReport {
   /// receive.
   pub fn try_recv(txn: &mut impl DbTxn, set: ValidatorSet) -> Option<()> {
     _public_db::SignSlashReport::try_recv(txn, set)
+  }
+}
+
+/// The keys to set on Serai.
+pub struct Keys;
+impl Keys {
+  /// Set the keys to report for a validator set.
+  ///
+  /// This only saves the most recent keys as only a single session is eligible to have its keys
+  /// reported at once.
+  pub fn set(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+    key_pair: KeyPair,
+    signature_participants: bitvec::vec::BitVec<u8, bitvec::order::Lsb0>,
+    signature: Signature,
+  ) {
+    // If we have a more recent pair of keys, don't write this historic one
+    if let Some((existing_session, _)) = _public_db::Keys::get(txn, set.network) {
+      if existing_session.0 >= set.session.0 {
+        return;
+      }
+    }
+
+    let tx = serai_client::validator_sets::SeraiValidatorSets::set_keys(
+      set.network,
+      key_pair,
+      signature_participants,
+      signature,
+    );
+    _public_db::Keys::set(txn, set.network, &(set.session, tx.encode()));
+  }
+  pub(crate) fn take(txn: &mut impl DbTxn, network: NetworkId) -> Option<(Session, Transaction)> {
+    let (session, tx) = _public_db::Keys::take(txn, network)?;
+    Some((session, <_>::decode(&mut tx.as_slice()).unwrap()))
+  }
+}
+
+/// The signed batches to publish onto Serai.
+pub struct SignedBatches;
+impl SignedBatches {
+  /// Send a `SignedBatch` to publish onto Serai.
+  ///
+  /// These will be published sequentially. Out-of-order sending risks hanging the task.
+  pub fn send(txn: &mut impl DbTxn, batch: &SignedBatch) {
+    _public_db::SignedBatches::send(txn, batch.batch.network, batch);
+  }
+  pub(crate) fn try_recv(txn: &mut impl DbTxn, network: NetworkId) -> Option<SignedBatch> {
+    _public_db::SignedBatches::try_recv(txn, network)
+  }
+}
+
+/// The slash report was invalid.
+#[derive(Debug)]
+pub struct InvalidSlashReport;
+
+/// The slash reports to publish onto Serai.
+pub struct SlashReports;
+impl SlashReports {
+  /// Set the slashes to report for a validator set.
+  ///
+  /// This only saves the most recent slashes as only a single session is eligible to have its
+  /// slashes reported at once.
+  ///
+  /// Returns Err if the slashes are invalid. Returns Ok if the slashes weren't detected as
+  /// invalid. Slashes may be considered invalid by the Serai blockchain later even if not detected
+  /// as invalid here.
+  pub fn set(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+    slashes: Vec<(SeraiAddress, u32)>,
+    signature: Signature,
+  ) -> Result<(), InvalidSlashReport> {
+    // If we have a more recent slash report, don't write this historic one
+    if let Some((existing_session, _)) = _public_db::SlashReports::get(txn, set.network) {
+      if existing_session.0 >= set.session.0 {
+        return Ok(());
+      }
+    }
+
+    let tx = serai_client::validator_sets::SeraiValidatorSets::report_slashes(
+      set.network,
+      slashes.try_into().map_err(|_| InvalidSlashReport)?,
+      signature,
+    );
+    _public_db::SlashReports::set(txn, set.network, &(set.session, tx.encode()));
+    Ok(())
+  }
+  pub(crate) fn take(txn: &mut impl DbTxn, network: NetworkId) -> Option<(Session, Transaction)> {
+    let (session, tx) = _public_db::SlashReports::take(txn, network)?;
+    Some((session, <_>::decode(&mut tx.as_slice()).unwrap()))
   }
 }

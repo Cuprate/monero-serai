@@ -18,7 +18,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 workspace = true
 
 [dependencies]
-scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["std", "derive"] }
+bitvec = { version = "1", default-features = false, features = ["std"] }
+
+scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["std", "derive", "bit-vec"] }
 borsh = { version = "1", default-features = false, features = ["std", "derive", "de_strict_order"] }
 serai-client = { path = "../../substrate/client", version = "0.1", default-features = false, features = ["serai", "borsh"] }
 

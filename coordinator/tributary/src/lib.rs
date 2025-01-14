@@ -206,7 +206,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
       }
       Transaction::DkgConfirmationShare { attempt, share, signed } => {
         // Accumulate the shares into our own FROST attempt manager
-        todo!("TODO")
+        todo!("TODO: SetKeysTask")
       }
 
       Transaction::Cosign { substrate_block_hash } => {

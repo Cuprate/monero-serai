@@ -39,8 +39,6 @@ mod p2p {
   pub use serai_coordinator_libp2p_p2p::Libp2p;
 }
 
-mod serai;
-
 // Use a zeroizing allocator for this entire application
 // While secrets should already be zeroized, the presence of secret keys in a networked application
 // (at increased risk of OOB reads) justifies the performance hit in case any secrets weren't
@@ -227,10 +225,10 @@ async fn handle_processor_messages(
           SignedCosigns::send(&mut txn, &cosign);
         }
         messages::coordinator::ProcessorMessage::SignedBatch { batch } => {
-          todo!("TODO Save to DB, have task read from DB and publish to Serai")
+          todo!("TODO PublishBatchTask")
         }
         messages::coordinator::ProcessorMessage::SignedSlashReport { session, signature } => {
-          todo!("TODO Save to DB, have task read from DB and publish to Serai")
+          todo!("TODO PublishSlashReportTask")
         }
       },
       messages::ProcessorMessage::Substrate(msg) => match msg {

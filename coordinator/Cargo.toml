@@ -30,7 +30,7 @@ schnorr = { package = "schnorr-signatures", path = "../crypto/schnorr", default-
 frost = { package = "modular-frost", path = "../crypto/frost" }
 frost-schnorrkel = { path = "../crypto/schnorrkel" }
 
-scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["std", "derive"] }
+scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["std", "derive", "bit-vec"] }
 
 zalloc = { path = "../common/zalloc" }
 serai-db = { path = "../common/db" }

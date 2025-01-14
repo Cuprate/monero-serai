@@ -8385,6 +8385,7 @@ dependencies = [
 name = "serai-coordinator-substrate"
 version = "0.1.0"
 dependencies = [
+ "bitvec",
  "borsh",
  "futures",
  "log",

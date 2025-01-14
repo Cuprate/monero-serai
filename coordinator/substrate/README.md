@@ -1,6 +1,6 @@
-# Serai Coordinate Substrate Scanner
+# Serai Coordinator Substrate
 
-This is the scanner of the Serai blockchain for the purposes of Serai's coordinator.
+This crate manages the Serai coordinators's interactions with Serai's Substrate blockchain.
 
 Two event streams are defined:
 
@@ -12,3 +12,9 @@ Two event streams are defined:
 The canonical event stream is available without provision of a validator's public key. The ephemeral
 event stream requires provision of a validator's public key. Both are ordered within themselves, yet
 there are no ordering guarantees across the two.
+
+Additionally, a collection of tasks are defined to publish data onto Serai:
+
+- `SetKeysTask`, which sets the keys generated via DKGs onto Serai.
+- `PublishBatchTask`, which publishes `Batch`s onto Serai.
+- `PublishSlashReportTask`, which publishes `SlashReport`s onto Serai.

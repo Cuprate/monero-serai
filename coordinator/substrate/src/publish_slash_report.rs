@@ -1,25 +1,28 @@
 use core::future::Future;
 use std::sync::Arc;
 
-use serai_db::{Get, DbTxn, Db as DbTrait, create_db};
+use serai_db::{DbTxn, Db};
 
-use scale::Decode;
 use serai_client::{primitives::NetworkId, validator_sets::primitives::Session, Serai};
 
 use serai_task::ContinuallyRan;
 
-create_db! {
-  CoordinatorSerai {
-    SlashReports: (network: NetworkId) -> (Session, Vec<u8>),
+use crate::SlashReports;
+
+/// Publish slash reports from `SlashReports` onto Serai.
+pub struct PublishSlashReportTask<D: Db> {
+  db: D,
+  serai: Arc<Serai>,
+}
+
+impl<D: Db> PublishSlashReportTask<D> {
+  /// Create a task to publish slash reports onto Serai.
+  pub fn new(db: D, serai: Arc<Serai>) -> Self {
+    Self { db, serai }
   }
 }
 
-/// Publish `SlashReport`s from `SlashReports` onto Serai.
-pub struct PublishSlashReportTask<CD: DbTrait> {
-  db: CD,
-  serai: Arc<Serai>,
-}
-impl<CD: DbTrait> ContinuallyRan for PublishSlashReportTask<CD> {
+impl<D: Db> ContinuallyRan for PublishSlashReportTask<D> {
   type Error = String;
 
   fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
@@ -35,7 +38,6 @@ impl<CD: DbTrait> ContinuallyRan for PublishSlashReportTask<CD> {
           // No slash report to publish
           continue;
         };
-        let slash_report = serai_client::Transaction::decode(&mut slash_report.as_slice()).unwrap();
 
         let serai =
           self.serai.as_of_latest_finalized_block().await.map_err(|e| format!("{e:?}"))?;
@@ -48,7 +50,7 @@ impl<CD: DbTrait> ContinuallyRan for PublishSlashReportTask<CD> {
         let session_after_slash_report_retired =
           current_session > Some(session_after_slash_report.0);
         if session_after_slash_report_retired {
-          // Commit the txn to drain this SlashReport from the database and not try it again later
+          // Commit the txn to drain this slash report from the database and not try it again later
           txn.commit();
           continue;
         }
@@ -57,7 +59,7 @@ impl<CD: DbTrait> ContinuallyRan for PublishSlashReportTask<CD> {
           // We already checked the current session wasn't greater, and they're not equal
           assert!(current_session < Some(session_after_slash_report.0));
           // This would mean the Serai node is resyncing and is behind where it prior was
-          Err("have a SlashReport for a session Serai has yet to retire".to_string())?;
+          Err("have a slash report for a session Serai has yet to retire".to_string())?;
         }
 
         // If this session which should publish a slash report already has, move on
@@ -67,14 +69,6 @@ impl<CD: DbTrait> ContinuallyRan for PublishSlashReportTask<CD> {
           txn.commit();
           continue;
         };
-
-        /*
-        let tx = serai_client::SeraiValidatorSets::report_slashes(
-          network,
-          slash_report,
-          signature.clone(),
-        );
-        */
 
         match self.serai.publish(&slash_report).await {
           Ok(()) => {
