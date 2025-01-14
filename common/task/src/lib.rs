@@ -10,6 +10,8 @@ use core::{
 
 use tokio::sync::mpsc;
 
+mod type_name;
+
 /// A handle for a task.
 ///
 /// The task will only stop running once all handles for it are dropped.
@@ -49,8 +51,6 @@ impl Task {
 
 impl TaskHandle {
   /// Tell the task to run now (and not whenever its next iteration on a timer is).
-  ///
-  /// Panics if the task has been dropped.
   pub fn run_now(&self) {
     #[allow(clippy::match_same_arms)]
     match self.run_now.try_send(()) {
@@ -58,6 +58,7 @@ impl TaskHandle {
       // NOP on full, as this task will already be ran as soon as possible
       Err(mpsc::error::TrySendError::Full(())) => {}
       Err(mpsc::error::TrySendError::Closed(())) => {
+        // The task should only be closed if all handles are dropped, and this one hasn't been
         panic!("task was unexpectedly closed when calling run_now")
       }
     }
@@ -131,7 +132,10 @@ pub trait ContinuallyRan: Sized + Send {
             }
           }
           Err(e) => {
-            log::warn!("{e:?}");
+            // Get the type name
+            let type_name = type_name::strip_type_name(core::any::type_name::<Self>());
+            // Print the error as a warning, prefixed by the task's type
+            log::warn!("{type_name}: {e:?}");
             increase_sleep_before_next_task(&mut current_sleep_before_next_task);
           }
         }
