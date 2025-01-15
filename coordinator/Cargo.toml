@@ -26,6 +26,7 @@ blake2 = { version = "0.10", default-features = false, features = ["std"] }
 schnorrkel = { version = "0.11", default-features = false, features = ["std"] }
 
 ciphersuite = { path = "../crypto/ciphersuite", default-features = false, features = ["std"] }
+dkg = { path = "../crypto/dkg", default-features = false, features = ["std"] }
 schnorr = { package = "schnorr-signatures", path = "../crypto/schnorr", default-features = false, features = ["std"] }
 frost = { package = "modular-frost", path = "../crypto/frost" }
 frost-schnorrkel = { path = "../crypto/schnorrkel" }

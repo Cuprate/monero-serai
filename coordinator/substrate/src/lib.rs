@@ -2,11 +2,15 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 
+use std::collections::HashMap;
+
 use scale::{Encode, Decode};
-use borsh::{io, BorshSerialize, BorshDeserialize};
+use borsh::{BorshSerialize, BorshDeserialize};
+
+use dkg::Participant;
 
 use serai_client::{
-  primitives::{NetworkId, PublicKey, Signature},
+  primitives::{NetworkId, SeraiAddress, Signature},
   validator_sets::primitives::{Session, ValidatorSet, KeyPair, SlashReport},
   in_instructions::primitives::SignedBatch,
   Transaction,
@@ -26,22 +30,9 @@ pub use publish_batch::PublishBatchTask;
 mod publish_slash_report;
 pub use publish_slash_report::PublishSlashReportTask;
 
-fn borsh_serialize_validators<W: io::Write>(
-  validators: &Vec<(PublicKey, u16)>,
-  writer: &mut W,
-) -> Result<(), io::Error> {
-  // This doesn't use `encode_to` as `encode_to` panics if the writer returns an error
-  writer.write_all(&validators.encode())
-}
-
-fn borsh_deserialize_validators<R: io::Read>(
-  reader: &mut R,
-) -> Result<Vec<(PublicKey, u16)>, io::Error> {
-  Decode::decode(&mut scale::IoReader(reader)).map_err(io::Error::other)
-}
-
 /// The information for a new set.
 #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
+#[borsh(init = init_participant_indexes)]
 pub struct NewSetInformation {
   /// The set.
   pub set: ValidatorSet,
@@ -52,13 +43,34 @@ pub struct NewSetInformation {
   /// The threshold to use.
   pub threshold: u16,
   /// The validators, with the amount of key shares they have.
-  #[borsh(
-    serialize_with = "borsh_serialize_validators",
-    deserialize_with = "borsh_deserialize_validators"
-  )]
-  pub validators: Vec<(PublicKey, u16)>,
+  pub validators: Vec<(SeraiAddress, u16)>,
   /// The eVRF public keys.
   pub evrf_public_keys: Vec<([u8; 32], Vec<u8>)>,
+  /// The participant indexes, indexed by their validator.
+  #[borsh(skip)]
+  pub participant_indexes: HashMap<SeraiAddress, Vec<Participant>>,
+  /// The validators, indexed by their participant indexes.
+  #[borsh(skip)]
+  pub participant_indexes_reverse_lookup: HashMap<Participant, SeraiAddress>,
+}
+
+impl NewSetInformation {
+  fn init_participant_indexes(&mut self) {
+    let mut next_i = 1;
+    self.participant_indexes = HashMap::with_capacity(self.validators.len());
+    self.participant_indexes_reverse_lookup = HashMap::with_capacity(self.validators.len());
+    for (validator, weight) in &self.validators {
+      let mut these_is = Vec::with_capacity((*weight).into());
+      for _ in 0 .. *weight {
+        let this_i = Participant::new(next_i).unwrap();
+        next_i += 1;
+
+        these_is.push(this_i);
+        self.participant_indexes_reverse_lookup.insert(this_i, *validator);
+      }
+      self.participant_indexes.insert(*validator, these_is);
+    }
+  }
 }
 
 mod _public_db {

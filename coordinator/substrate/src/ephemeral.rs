@@ -4,7 +4,7 @@ use std::sync::Arc;
 use futures::stream::{StreamExt, FuturesOrdered};
 
 use serai_client::{
-  primitives::{PublicKey, NetworkId, EmbeddedEllipticCurve},
+  primitives::{NetworkId, SeraiAddress, EmbeddedEllipticCurve},
   validator_sets::primitives::MAX_KEY_SHARES_PER_SET,
   Serai,
 };
@@ -26,14 +26,14 @@ create_db!(
 pub struct EphemeralEventStream<D: Db> {
   db: D,
   serai: Arc<Serai>,
-  validator: PublicKey,
+  validator: SeraiAddress,
 }
 
 impl<D: Db> EphemeralEventStream<D> {
   /// Create a new ephemeral event stream.
   ///
   /// Only one of these may exist over the provided database.
-  pub fn new(db: D, serai: Arc<Serai>, validator: PublicKey) -> Self {
+  pub fn new(db: D, serai: Arc<Serai>, validator: SeraiAddress) -> Self {
     Self { db, serai, validator }
   }
 }
@@ -145,6 +145,10 @@ impl<D: Db> ContinuallyRan for EphemeralEventStream<D> {
               "block #{block_number} declared a new set but didn't have the participants"
             ))?
           };
+          let validators = validators
+            .into_iter()
+            .map(|(validator, weight)| (SeraiAddress::from(validator), weight))
+            .collect::<Vec<_>>();
           let in_set = validators.iter().any(|(validator, _)| *validator == self.validator);
           if in_set {
             if u16::try_from(validators.len()).is_err() {
@@ -177,14 +181,16 @@ impl<D: Db> ContinuallyRan for EphemeralEventStream<D> {
               embedded_elliptic_curve_keys.push_back(async move {
                 tokio::try_join!(
                   // One future to fetch the substrate embedded key
-                  serai
-                    .embedded_elliptic_curve_key(validator, EmbeddedEllipticCurve::Embedwards25519),
+                  serai.embedded_elliptic_curve_key(
+                    validator.into(),
+                    EmbeddedEllipticCurve::Embedwards25519
+                  ),
                   // One future to fetch the external embedded key, if there is a distinct curve
                   async {
                     // `embedded_elliptic_curves` is documented to have the second entry be the
                     // network-specific curve (if it exists and is distinct from Embedwards25519)
                     if let Some(curve) = set.network.embedded_elliptic_curves().get(1) {
-                      serai.embedded_elliptic_curve_key(validator, *curve).await.map(Some)
+                      serai.embedded_elliptic_curve_key(validator.into(), *curve).await.map(Some)
                     } else {
                       Ok(None)
                     }
@@ -215,19 +221,22 @@ impl<D: Db> ContinuallyRan for EphemeralEventStream<D> {
               }
             }
 
-            crate::NewSet::send(
-              &mut txn,
-              &NewSetInformation {
-                set: *set,
-                serai_block: block.block_hash,
-                declaration_time: block.time,
-                // TODO: Why do we have this as an explicit field here?
-                // Shouldn't thiis be inlined into the Processor's key gen code, where it's used?
-                threshold: ((total_weight * 2) / 3) + 1,
-                validators,
-                evrf_public_keys,
-              },
-            );
+            let mut new_set = NewSetInformation {
+              set: *set,
+              serai_block: block.block_hash,
+              declaration_time: block.time,
+              // TODO: Why do we have this as an explicit field here?
+              // Shouldn't this be inlined into the Processor's key gen code, where it's used?
+              threshold: ((total_weight * 2) / 3) + 1,
+              validators,
+              evrf_public_keys,
+              participant_indexes: Default::default(),
+              participant_indexes_reverse_lookup: Default::default(),
+            };
+            // These aren't serialized, and we immediately serialize and drop this, so this isn't
+            // necessary. It's just good practice not have this be dirty
+            new_set.init_participant_indexes();
+            crate::NewSet::send(&mut txn, &new_set);
           }
         }
 

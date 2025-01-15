@@ -22,6 +22,9 @@ bitvec = { version = "1", default-features = false, features = ["std"] }
 
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["std", "derive", "bit-vec"] }
 borsh = { version = "1", default-features = false, features = ["std", "derive", "de_strict_order"] }
+
+dkg = { path = "../../crypto/dkg", default-features = false, features = ["std"] }
+
 serai-client = { path = "../../substrate/client", version = "0.1", default-features = false, features = ["serai", "borsh"] }
 
 log = { version = "0.4", default-features = false, features = ["std"] }

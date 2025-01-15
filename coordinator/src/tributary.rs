@@ -26,7 +26,7 @@ use serai_coordinator_tributary::{
 };
 use serai_coordinator_p2p::P2p;
 
-use crate::{Db, TributaryTransactions};
+use crate::{Db, TributaryTransactions, RemoveParticipant};
 
 create_db! {
   Coordinator {
@@ -158,8 +158,14 @@ impl<CD: DbTrait, TD: DbTrait, P: P2p> ContinuallyRan
 #[must_use]
 async fn add_signed_unsigned_transaction<TD: DbTrait, P: P2p>(
   tributary: &Tributary<TD, Transaction, P>,
-  tx: &Transaction,
+  key: &Zeroizing<<Ristretto as Ciphersuite>::F>,
+  mut tx: Transaction,
 ) -> bool {
+  // If this is a signed transaction, sign it
+  if matches!(tx.kind(), TransactionKind::Signed(_, _)) {
+    tx.sign(&mut OsRng, tributary.genesis(), key);
+  }
+
   let res = tributary.add_transaction(tx.clone()).await;
   match &res {
     // Fresh publication, already published
@@ -191,7 +197,7 @@ pub(crate) struct AddTributaryTransactionsTask<CD: DbTrait, TD: DbTrait, P: P2p>
   db: CD,
   tributary_db: TD,
   tributary: Tributary<TD, Transaction, P>,
-  set: ValidatorSet,
+  set: NewSetInformation,
   key: Zeroizing<<Ristretto as Ciphersuite>::F>,
 }
 impl<CD: DbTrait, TD: DbTrait, P: P2p> ContinuallyRan for AddTributaryTransactionsTask<CD, TD, P> {
@@ -204,23 +210,20 @@ impl<CD: DbTrait, TD: DbTrait, P: P2p> ContinuallyRan for AddTributaryTransactio
       // Provide/add all transactions sent our way
       loop {
         let mut txn = self.db.txn();
-        let Some(mut tx) = TributaryTransactions::try_recv(&mut txn, self.set) else { break };
+        let Some(tx) = TributaryTransactions::try_recv(&mut txn, self.set.set) else { break };
 
         let kind = tx.kind();
         match kind {
-          TransactionKind::Provided(_) => provide_transaction(self.set, &self.tributary, tx).await,
+          TransactionKind::Provided(_) => {
+            provide_transaction(self.set.set, &self.tributary, tx).await
+          }
           TransactionKind::Unsigned | TransactionKind::Signed(_, _) => {
-            // If this is a signed transaction, sign it
-            if matches!(kind, TransactionKind::Signed(_, _)) {
-              tx.sign(&mut OsRng, self.tributary.genesis(), &self.key);
-            }
-
             // If this is a transaction with signing data, check the topic is recognized before
             // publishing
             let topic = tx.topic();
             let still_requires_recognition = if let Some(topic) = topic {
               (topic.requires_recognition() &&
-                (!RecognizedTopics::recognized(&self.tributary_db, self.set, topic)))
+                (!RecognizedTopics::recognized(&self.tributary_db, self.set.set, topic)))
               .then_some(topic)
             } else {
               None
@@ -229,11 +232,11 @@ impl<CD: DbTrait, TD: DbTrait, P: P2p> ContinuallyRan for AddTributaryTransactio
               // Queue the transaction until the topic is recognized
               // We use the Tributary DB for this so it's cleaned up when the Tributary DB is
               let mut txn = self.tributary_db.txn();
-              PublishOnRecognition::set(&mut txn, self.set, topic, &tx);
+              PublishOnRecognition::set(&mut txn, self.set.set, topic, &tx);
               txn.commit();
             } else {
               // Actually add the transaction
-              if !add_signed_unsigned_transaction(&self.tributary, &tx).await {
+              if !add_signed_unsigned_transaction(&self.tributary, &self.key, tx).await {
                 break;
               }
             }
@@ -248,16 +251,31 @@ impl<CD: DbTrait, TD: DbTrait, P: P2p> ContinuallyRan for AddTributaryTransactio
       loop {
         let mut txn = self.tributary_db.txn();
         let Some(topic) =
-          RecognizedTopics::try_recv_topic_requiring_recognition(&mut txn, self.set)
+          RecognizedTopics::try_recv_topic_requiring_recognition(&mut txn, self.set.set)
         else {
           break;
         };
-        if let Some(tx) = PublishOnRecognition::take(&mut txn, self.set, topic) {
-          if !add_signed_unsigned_transaction(&self.tributary, &tx).await {
+        if let Some(tx) = PublishOnRecognition::take(&mut txn, self.set.set, topic) {
+          if !add_signed_unsigned_transaction(&self.tributary, &self.key, tx).await {
             break;
           }
         }
 
+        made_progress = true;
+        txn.commit();
+      }
+
+      // Publish any participant removals
+      loop {
+        let mut txn = self.db.txn();
+        let Some(participant) = RemoveParticipant::try_recv(&mut txn, self.set.set) else { break };
+        let tx = Transaction::RemoveParticipant {
+          participant: self.set.participant_indexes_reverse_lookup[&participant],
+          signed: Default::default(),
+        };
+        if !add_signed_unsigned_transaction(&self.tributary, &self.key, tx).await {
+          break;
+        }
         made_progress = true;
         txn.commit();
       }
@@ -487,7 +505,7 @@ pub(crate) async fn spawn_tributary<P: P2p>(
       db: db.clone(),
       tributary_db,
       tributary: tributary.clone(),
-      set: set.set,
+      set: set.clone(),
       key: serai_key,
     })
     .continually_run(add_tributary_transactions_task_def, vec![]),

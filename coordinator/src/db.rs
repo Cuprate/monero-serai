@@ -3,6 +3,8 @@ use std::{path::Path, fs};
 pub(crate) use serai_db::{Get, DbTxn, Db as DbTrait};
 use serai_db::{create_db, db_channel};
 
+use dkg::Participant;
+
 use serai_client::{
   primitives::NetworkId,
   validator_sets::primitives::{Session, ValidatorSet},
@@ -95,6 +97,8 @@ mod _internal_db {
     Coordinator {
       // Tributary transactions to publish
       TributaryTransactions: (set: ValidatorSet) -> Transaction,
+      // Participants to remove
+      RemoveParticipant: (set: ValidatorSet) -> Participant,
     }
   }
 }
@@ -109,5 +113,18 @@ impl TributaryTransactions {
   }
   pub(crate) fn try_recv(txn: &mut impl DbTxn, set: ValidatorSet) -> Option<Transaction> {
     _internal_db::TributaryTransactions::try_recv(txn, set)
+  }
+}
+
+pub(crate) struct RemoveParticipant;
+impl RemoveParticipant {
+  pub(crate) fn send(txn: &mut impl DbTxn, set: ValidatorSet, participant: Participant) {
+    // If this set has yet to be retired, send this transaction
+    if RetiredTributary::get(txn, set.network).map(|session| session.0) < Some(set.session.0) {
+      _internal_db::RemoveParticipant::send(txn, set, &participant);
+    }
+  }
+  pub(crate) fn try_recv(txn: &mut impl DbTxn, set: ValidatorSet) -> Option<Participant> {
+    _internal_db::RemoveParticipant::try_recv(txn, set)
   }
 }

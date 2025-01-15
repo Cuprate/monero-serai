@@ -14,7 +14,7 @@ use borsh::BorshDeserialize;
 use tokio::sync::mpsc;
 
 use serai_client::{
-  primitives::{NetworkId, PublicKey, Signature},
+  primitives::{NetworkId, SeraiAddress, Signature},
   validator_sets::primitives::ValidatorSet,
   Serai,
 };
@@ -209,28 +209,12 @@ async fn handle_network(
           network_key,
         } => todo!("TODO Transaction::DkgConfirmationPreprocess"),
         messages::key_gen::ProcessorMessage::Blame { session, participant } => {
-          let set = ValidatorSet { network, session };
-          TributaryTransactions::send(
-            &mut txn,
-            set,
-            &Transaction::RemoveParticipant {
-              participant: todo!("TODO"),
-              signed: Signed::default(),
-            },
-          );
+          RemoveParticipant::send(&mut txn, ValidatorSet { network, session }, participant);
         }
       },
       messages::ProcessorMessage::Sign(msg) => match msg {
         messages::sign::ProcessorMessage::InvalidParticipant { session, participant } => {
-          let set = ValidatorSet { network, session };
-          TributaryTransactions::send(
-            &mut txn,
-            set,
-            &Transaction::RemoveParticipant {
-              participant: todo!("TODO"),
-              signed: Signed::default(),
-            },
-          );
+          RemoveParticipant::send(&mut txn, ValidatorSet { network, session }, participant);
         }
         messages::sign::ProcessorMessage::Preprocesses { id, preprocesses } => {
           let set = ValidatorSet { network, session: id.session };
@@ -371,6 +355,8 @@ async fn main() {
       while !Cosigning::<Db>::intended_cosigns(&mut txn, to_cleanup).is_empty() {}
       // Drain the transactions to publish for this set
       while TributaryTransactions::try_recv(&mut txn, to_cleanup).is_some() {}
+      // Drain the participants to remove for this set
+      while RemoveParticipant::try_recv(&mut txn, to_cleanup).is_some() {}
       // Remove the SignSlashReport notification
       SignSlashReport::try_recv(&mut txn, to_cleanup);
     }
@@ -434,7 +420,7 @@ async fn main() {
     EphemeralEventStream::new(
       db.clone(),
       serai.clone(),
-      PublicKey::from_raw((<Ristretto as Ciphersuite>::generator() * serai_key.deref()).to_bytes()),
+      SeraiAddress((<Ristretto as Ciphersuite>::generator() * serai_key.deref()).to_bytes()),
     )
     .continually_run(substrate_ephemeral_task_def, vec![substrate_task]),
   );

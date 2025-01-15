@@ -515,7 +515,6 @@ impl<TD: Db, P: P2p> ScanTributaryTask<TD, P> {
     let mut total_weight = 0;
     let mut validator_weights = HashMap::with_capacity(new_set.validators.len());
     for (validator, weight) in new_set.validators.iter().copied() {
-      let validator = SeraiAddress::from(validator);
       let weight = u64::from(weight);
       validators.push(validator);
       total_weight += weight;
@@ -597,7 +596,6 @@ impl<TD: Db, P: P2p> ContinuallyRan for ScanTributaryTask<TD, P> {
 pub fn slash_report_transaction(getter: &impl Get, set: &NewSetInformation) -> Transaction {
   let mut slash_points = Vec::with_capacity(set.validators.len());
   for (validator, _weight) in set.validators.iter().copied() {
-    let validator = SeraiAddress::from(validator);
     slash_points.push(SlashPoints::get(getter, set.set, validator).unwrap_or(0));
   }
   Transaction::SlashReport { slash_points, signed: Signed::default() }
