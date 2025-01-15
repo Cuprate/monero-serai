@@ -13,7 +13,7 @@ use serai_coordinator_substrate::NewSetInformation;
 use serai_coordinator_tributary::Transaction;
 
 #[cfg(all(feature = "parity-db", not(feature = "rocksdb")))]
-pub(crate) type Db = serai_db::ParityDb;
+pub(crate) type Db = std::sync::Arc<serai_db::ParityDb>;
 #[cfg(feature = "rocksdb")]
 pub(crate) type Db = serai_db::RocksDB;
 
