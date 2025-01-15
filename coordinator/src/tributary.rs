@@ -479,7 +479,7 @@ pub(crate) async fn spawn_tributary<P: P2p>(
   // Spawn the scan task
   let (scan_tributary_task_def, scan_tributary_task) = Task::new();
   tokio::spawn(
-    ScanTributaryTask::<_, P>::new(tributary_db.clone(), &set, reader)
+    ScanTributaryTask::<_, P>::new(tributary_db.clone(), set.clone(), reader)
       // This is the only handle for this TributaryProcessorMessagesTask, so when this task is
       // dropped, it will be too
       .continually_run(scan_tributary_task_def, vec![scan_tributary_messages_task]),

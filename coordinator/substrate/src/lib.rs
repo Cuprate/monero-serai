@@ -45,6 +45,9 @@ pub struct NewSetInformation {
   /// The validators, with the amount of key shares they have.
   pub validators: Vec<(SeraiAddress, u16)>,
   /// The eVRF public keys.
+  ///
+  /// This will have the necessary copies of the keys proper for each validator's weight,
+  /// accordingly syncing up with `participant_indexes`.
   pub evrf_public_keys: Vec<([u8; 32], Vec<u8>)>,
   /// The participant indexes, indexed by their validator.
   #[borsh(skip)]

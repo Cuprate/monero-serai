@@ -29,8 +29,8 @@ pub(crate) fn generators<C: EvrfCurve>() -> &'static EvrfGenerators<C> {
     .or_insert_with(|| {
       // If we haven't prior needed generators for this Ciphersuite, generate new ones
       Box::leak(Box::new(EvrfGenerators::<C>::new(
-        ((MAX_KEY_SHARES_PER_SET * 2 / 3) + 1).try_into().unwrap(),
-        MAX_KEY_SHARES_PER_SET.try_into().unwrap(),
+        (MAX_KEY_SHARES_PER_SET * 2 / 3) + 1,
+        MAX_KEY_SHARES_PER_SET,
       )))
     })
     .downcast_ref()

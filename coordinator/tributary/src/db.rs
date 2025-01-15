@@ -168,7 +168,7 @@ impl Topic {
     }
   }
 
-  fn required_participation(&self, n: u64) -> u64 {
+  fn required_participation(&self, n: u16) -> u16 {
     let _ = self;
     // All of our topics require 2/3rds participation
     ((2 * n) / 3) + 1
@@ -218,7 +218,7 @@ create_db!(
     SubstrateBlockPlans: (set: ValidatorSet, substrate_block_hash: [u8; 32]) -> Vec<[u8; 32]>,
 
     // The weight accumulated for a topic.
-    AccumulatedWeight: (set: ValidatorSet, topic: Topic) -> u64,
+    AccumulatedWeight: (set: ValidatorSet, topic: Topic) -> u16,
     // The entries accumulated for a topic, by validator.
     Accumulated: <D: Borshy>(set: ValidatorSet, topic: Topic, validator: SeraiAddress) -> D,
 
@@ -360,11 +360,11 @@ impl TributaryDb {
     txn: &mut impl DbTxn,
     set: ValidatorSet,
     validators: &[SeraiAddress],
-    total_weight: u64,
+    total_weight: u16,
     block_number: u64,
     topic: Topic,
     validator: SeraiAddress,
-    validator_weight: u64,
+    validator_weight: u16,
     data: &D,
   ) -> DataSet<D> {
     // This function will only be called once for a (validator, topic) tuple due to how we handle
