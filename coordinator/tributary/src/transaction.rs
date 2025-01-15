@@ -259,9 +259,7 @@ impl TransactionTrait for Transaction {
 
       Transaction::Cosign { .. } => TransactionKind::Provided("Cosign"),
       Transaction::Cosigned { .. } => TransactionKind::Provided("Cosigned"),
-      // TODO: Provide this
       Transaction::SubstrateBlock { .. } => TransactionKind::Provided("SubstrateBlock"),
-      // TODO: Provide this
       Transaction::Batch { .. } => TransactionKind::Provided("Batch"),
 
       Transaction::Sign { id, attempt, round, signed, .. } => TransactionKind::Signed(

@@ -24,7 +24,7 @@ use serai_task::{Task, TaskHandle, ContinuallyRan};
 
 use serai_cosign::{Faulted, SignedCosign, Cosigning};
 use serai_coordinator_substrate::{CanonicalEventStream, EphemeralEventStream, SignSlashReport};
-use serai_coordinator_tributary::{Signed, Transaction, SubstrateBlockPlans};
+use serai_coordinator_tributary::{SigningProtocolRound, Signed, Transaction, SubstrateBlockPlans};
 
 mod db;
 use db::*;
@@ -216,9 +216,41 @@ async fn handle_processor_messages(
           );
         }
         messages::sign::ProcessorMessage::Preprocesses { id, preprocesses } => {
-          todo!("TODO Transaction::Batch + Transaction::Sign")
+          let set = ValidatorSet { network, session: id.session };
+          if id.attempt == 0 {
+            // Batches are declared by their intent to be signed
+            // TODO: Document this in processor <-> coordinator rebuild issue
+            if let messages::sign::VariantSignId::Batch(hash) = id.id {
+              TributaryTransactions::send(&mut txn, set, &Transaction::Batch { hash });
+            }
+          }
+
+          TributaryTransactions::send(
+            &mut txn,
+            set,
+            &Transaction::Sign {
+              id: id.id,
+              attempt: id.attempt,
+              round: SigningProtocolRound::Preprocess,
+              data: preprocesses,
+              signed: Signed::default(),
+            },
+          );
         }
-        messages::sign::ProcessorMessage::Shares { id, shares } => todo!("TODO Transaction::Sign"),
+        messages::sign::ProcessorMessage::Shares { id, shares } => {
+          let set = ValidatorSet { network, session: id.session };
+          TributaryTransactions::send(
+            &mut txn,
+            set,
+            &Transaction::Sign {
+              id: id.id,
+              attempt: id.attempt,
+              round: SigningProtocolRound::Share,
+              data: shares,
+              signed: Signed::default(),
+            },
+          );
+        }
       },
       messages::ProcessorMessage::Coordinator(msg) => match msg {
         messages::coordinator::ProcessorMessage::CosignedBlock { cosign } => {
