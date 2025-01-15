@@ -121,6 +121,8 @@ impl Slash {
               }
             })
         };
+        // Ensure the slash never exceeds the amount slashable (due to rounding errors)
+        let reward_slash = reward_slash.min(session_rewards);
 
         /*
         let slash_points_for_entire_session =
@@ -192,10 +194,9 @@ impl Slash {
         let offline_slash = 0;
         let disruptive_slash = 0;
 
-        // The penalty is all slashes, but never more than the validator's balance
-        // (handles any rounding errors which may or may not exist)
-        let penalty_u128 =
-          (reward_slash + offline_slash + disruptive_slash).min(allocated_stake + session_rewards);
+        let stake_slash = (offline_slash + disruptive_slash).min(allocated_stake);
+
+        let penalty_u128 = reward_slash + stake_slash;
         // saturating_into
         Amount(u64::try_from(penalty_u128).unwrap_or(u64::MAX))
       }
