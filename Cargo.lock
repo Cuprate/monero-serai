@@ -8431,6 +8431,7 @@ dependencies = [
  "blake2",
  "borsh",
  "ciphersuite",
+ "dkg",
  "log",
  "parity-scale-codec",
  "rand_core",

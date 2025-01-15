@@ -229,7 +229,11 @@ create_db!(
 
 db_channel!(
   CoordinatorTributary {
+    // Messages to send to the processor
     ProcessorMessages: (set: ValidatorSet) -> messages::CoordinatorMessage,
+    // Messages for the DKG confirmation
+    DkgConfirmationMessages: (set: ValidatorSet) -> messages::sign::CoordinatorMessage,
+    // Topics which have been explicitly recognized
     RecognizedTopics: (set: ValidatorSet) -> Topic,
   }
 );

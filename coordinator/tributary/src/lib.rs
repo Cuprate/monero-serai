@@ -5,7 +5,10 @@
 use core::{marker::PhantomData, future::Future};
 use std::collections::HashMap;
 
+use scale::Encode;
+
 use ciphersuite::group::GroupEncoding;
+use dkg::Participant;
 
 use serai_client::{
   primitives::SeraiAddress,
@@ -27,7 +30,7 @@ use tributary_sdk::{
 use serai_cosign::CosignIntent;
 use serai_coordinator_substrate::NewSetInformation;
 
-use messages::sign::VariantSignId;
+use messages::sign::{VariantSignId, SignId};
 
 mod transaction;
 pub use transaction::{SigningProtocolRound, Signed, Transaction};
@@ -42,6 +45,24 @@ impl ProcessorMessages {
   /// Try to receive a message to send to a Processor.
   pub fn try_recv(txn: &mut impl DbTxn, set: ValidatorSet) -> Option<messages::CoordinatorMessage> {
     db::ProcessorMessages::try_recv(txn, set)
+  }
+}
+
+/// Messages for the DKG confirmation.
+pub struct DkgConfirmationMessages;
+impl DkgConfirmationMessages {
+  /// Receive a message for the DKG confirmation.
+  ///
+  /// These messages use the ProcessorMessage API as that's what existing flows are designed
+  /// around, enabling their reuse. The ProcessorMessage includes a VariantSignId which isn't
+  /// applicable to the DKG confirmation (as there's no such variant of the VariantSignId). The
+  /// actual ID is undefined other than it will be consistent to the signing protocol and unique
+  /// across validator sets, with no guarantees of uniqueness across contexts.
+  pub fn try_recv(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+  ) -> Option<messages::sign::CoordinatorMessage> {
+    db::DkgConfirmationMessages::try_recv(txn, set)
   }
 }
 
@@ -158,6 +179,62 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
       },
     );
   }
+
+  fn accumulate_dkg_confirmation<D: AsRef<[u8]> + Borshy>(
+    &mut self,
+    block_number: u64,
+    topic: Topic,
+    attempt: u32,
+    data: &D,
+    signer: SeraiAddress,
+  ) -> Option<(SignId, HashMap<Participant, Vec<u8>>)> {
+    match TributaryDb::accumulate::<D>(
+      self.tributary_txn,
+      self.set.set,
+      self.validators,
+      self.total_weight,
+      block_number,
+      topic,
+      signer,
+      self.validator_weights[&signer],
+      data,
+    ) {
+      DataSet::None => None,
+      DataSet::Participating(data_set) => {
+        // Consistent ID for the DKG confirmation, unqie across sets
+        let id = {
+          let mut id = [0; 32];
+          let encoded_set = self.set.set.encode();
+          id[.. encoded_set.len()].copy_from_slice(&encoded_set);
+          VariantSignId::Batch(id)
+        };
+        let id = SignId { session: self.set.set.session, id, attempt };
+
+        // This will be used in a MuSig protocol, so the Participant indexes are the validator's
+        // position in the list regardless of their weight
+        let flatten_data_set = |data_set: HashMap<_, D>| {
+          let mut entries = HashMap::with_capacity(usize::from(self.total_weight));
+          for (validator, participation) in data_set {
+            let (index, (_validator, _weight)) = &self
+              .set
+              .validators
+              .iter()
+              .enumerate()
+              .find(|(_i, (validator_i, _weight))| validator == *validator_i)
+              .unwrap();
+            entries.insert(
+              Participant::new(u16::try_from(*index).unwrap()).unwrap(),
+              participation.as_ref().to_vec(),
+            );
+          }
+          entries
+        };
+        let data_set = flatten_data_set(data_set);
+        Some((id, data_set))
+      }
+    }
+  }
+
   fn handle_application_tx(&mut self, block_number: u64, tx: Transaction) {
     let signer = |signed: Signed| SeraiAddress(signed.signer().to_bytes());
 
@@ -226,12 +303,36 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
         );
       }
       Transaction::DkgConfirmationPreprocess { attempt, preprocess, signed } => {
-        // Accumulate the preprocesses into our own FROST attempt manager
-        todo!("TODO")
+        let topic = topic.unwrap();
+        let signer = signer(signed);
+
+        let Some((id, data_set)) =
+          self.accumulate_dkg_confirmation(block_number, topic, attempt, &preprocess, signer)
+        else {
+          return;
+        };
+
+        db::DkgConfirmationMessages::send(
+          self.tributary_txn,
+          self.set.set,
+          &messages::sign::CoordinatorMessage::Preprocesses { id, preprocesses: data_set },
+        );
       }
       Transaction::DkgConfirmationShare { attempt, share, signed } => {
-        // Accumulate the shares into our own FROST attempt manager
-        todo!("TODO: SetKeysTask")
+        let topic = topic.unwrap();
+        let signer = signer(signed);
+
+        let Some((id, data_set)) =
+          self.accumulate_dkg_confirmation(block_number, topic, attempt, &share, signer)
+        else {
+          return;
+        };
+
+        db::DkgConfirmationMessages::send(
+          self.tributary_txn,
+          self.set.set,
+          &messages::sign::CoordinatorMessage::Shares { id, shares: data_set },
+        );
       }
 
       Transaction::Cosign { substrate_block_hash } => {
@@ -405,7 +506,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
         };
       }
 
-      Transaction::Sign { id, attempt, round, data, signed } => {
+      Transaction::Sign { id: _, attempt: _, round, data, signed } => {
         let topic = topic.unwrap();
         let signer = signer(signed);
 
@@ -458,7 +559,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
               },
             )
           }
-        };
+        }
       }
     }
   }
