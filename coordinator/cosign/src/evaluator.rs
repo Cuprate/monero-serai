@@ -1,5 +1,5 @@
 use core::future::Future;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use serai_db::*;
 use serai_task::ContinuallyRan;
@@ -77,12 +77,22 @@ pub(crate) fn currently_evaluated_global_session(getter: &impl Get) -> Option<[u
 pub(crate) struct CosignEvaluatorTask<D: Db, R: RequestNotableCosigns> {
   pub(crate) db: D,
   pub(crate) request: R,
+  pub(crate) last_request_for_cosigns: Instant,
 }
 
 impl<D: Db, R: RequestNotableCosigns> ContinuallyRan for CosignEvaluatorTask<D, R> {
   type Error = String;
 
   fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
+    let should_request_cosigns = |last_request_for_cosigns: &mut Instant| {
+      const REQUEST_COSIGNS_SPACING: Duration = Duration::from_secs(60);
+      if Instant::now() < (*last_request_for_cosigns + REQUEST_COSIGNS_SPACING) {
+        return false;
+      }
+      *last_request_for_cosigns = Instant::now();
+      true
+    };
+
     async move {
       let mut known_cosign = None;
       let mut made_progress = false;
@@ -118,12 +128,13 @@ impl<D: Db, R: RequestNotableCosigns> ContinuallyRan for CosignEvaluatorTask<D, 
             // Check if the sum weight doesn't cross the required threshold
             if weight_cosigned < (((global_session_info.total_stake * 83) / 100) + 1) {
               // Request the necessary cosigns over the network
-              // TODO: Add a timer to ensure this isn't called too often
-              self
-                .request
-                .request_notable_cosigns(global_session)
-                .await
-                .map_err(|e| format!("{e:?}"))?;
+              if should_request_cosigns(&mut self.last_request_for_cosigns) {
+                self
+                  .request
+                  .request_notable_cosigns(global_session)
+                  .await
+                  .map_err(|e| format!("{e:?}"))?;
+              }
               // We return an error so the delay before this task is run again increases
               return Err(format!(
                 "notable block (#{block_number}) wasn't yet cosigned. this should resolve shortly",
@@ -180,11 +191,13 @@ impl<D: Db, R: RequestNotableCosigns> ContinuallyRan for CosignEvaluatorTask<D, 
                 // If this session hasn't yet produced notable cosigns, then we presume we'll see
                 // the desired non-notable cosigns as part of normal operations, without needing to
                 // explicitly request them
-                self
-                  .request
-                  .request_notable_cosigns(global_session)
-                  .await
-                  .map_err(|e| format!("{e:?}"))?;
+                if should_request_cosigns(&mut self.last_request_for_cosigns) {
+                  self
+                    .request
+                    .request_notable_cosigns(global_session)
+                    .await
+                    .map_err(|e| format!("{e:?}"))?;
+                }
                 // We return an error so the delay before this task is run again increases
                 return Err(format!(
                   "block (#{block_number}) wasn't yet cosigned. this should resolve shortly",

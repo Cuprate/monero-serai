@@ -3,7 +3,7 @@
 #![deny(missing_docs)]
 
 use core::{fmt::Debug, future::Future};
-use std::{sync::Arc, collections::HashMap};
+use std::{sync::Arc, collections::HashMap, time::Instant};
 
 use blake2::{Digest, Blake2s256};
 
@@ -288,8 +288,12 @@ impl<D: Db> Cosigning<D> {
         .continually_run(intend_task, vec![evaluator_task_handle]),
     );
     tokio::spawn(
-      (evaluator::CosignEvaluatorTask { db: db.clone(), request })
-        .continually_run(evaluator_task, vec![delay_task_handle]),
+      (evaluator::CosignEvaluatorTask {
+        db: db.clone(),
+        request,
+        last_request_for_cosigns: Instant::now(),
+      })
+      .continually_run(evaluator_task, vec![delay_task_handle]),
     );
     tokio::spawn(
       (delay::CosignDelayTask { db: db.clone() })
