@@ -34,6 +34,7 @@ pub use transaction::{SigningProtocolRound, Signed, Transaction};
 
 mod db;
 use db::*;
+pub use db::Topic;
 
 /// Messages to send to the Processors.
 pub struct ProcessorMessages;
@@ -62,10 +63,28 @@ impl CosignIntents {
   }
 }
 
-/// The plans to whitelist upon a `Transaction::SubstrateBlock` being included on-chain.
+/// An interface to the topics recognized on this Tributary.
+pub struct RecognizedTopics;
+impl RecognizedTopics {
+  /// If this topic has been recognized by this Tributary.
+  ///
+  /// This will either be by explicit recognition or participation.
+  pub fn recognized(getter: &impl Get, set: ValidatorSet, topic: Topic) -> bool {
+    TributaryDb::recognized(getter, set, topic)
+  }
+  /// The next topic requiring recognition which has been recognized by this Tributary.
+  pub fn try_recv_topic_requiring_recognition(
+    txn: &mut impl DbTxn,
+    set: ValidatorSet,
+  ) -> Option<Topic> {
+    db::RecognizedTopics::try_recv(txn, set)
+  }
+}
+
+/// The plans to recognize upon a `Transaction::SubstrateBlock` being included on-chain.
 pub struct SubstrateBlockPlans;
 impl SubstrateBlockPlans {
-  /// Set the plans to whitelist upon the associated `Transaction::SubstrateBlock` being included
+  /// Set the plans to recognize upon the associated `Transaction::SubstrateBlock` being included
   /// on-chain.
   ///
   /// This must be done before the associated `Transaction::Cosign` is provided.
@@ -75,7 +94,7 @@ impl SubstrateBlockPlans {
     substrate_block_hash: [u8; 32],
     plans: &Vec<[u8; 32]>,
   ) {
-    db::SubstrateBlockPlans::set(txn, set, substrate_block_hash, &plans);
+    db::SubstrateBlockPlans::set(txn, set, substrate_block_hash, plans);
   }
   fn take(
     txn: &mut impl DbTxn,
@@ -154,6 +173,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
       }
     }
 
+    let topic = tx.topic();
     match tx {
       // Accumulate this vote and fatally slash the participant if past the threshold
       Transaction::RemoveParticipant { participant, signed } => {
@@ -176,7 +196,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
           self.validators,
           self.total_weight,
           block_number,
-          Topic::RemoveParticipant { participant },
+          topic.unwrap(),
           signer,
           self.validator_weights[&signer],
           &(),
@@ -244,7 +264,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
         self.potentially_start_cosign();
       }
       Transaction::SubstrateBlock { hash } => {
-        // Whitelist all of the IDs this Substrate block causes to be signed
+        // Recognize all of the IDs this Substrate block causes to be signed
         let plans = SubstrateBlockPlans::take(self.tributary_txn, self.set, hash).expect(
           "Transaction::SubstrateBlock locally provided but SubstrateBlockPlans wasn't populated",
         );
@@ -261,7 +281,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
         }
       }
       Transaction::Batch { hash } => {
-        // Whitelist the signing of this batch
+        // Recognize the signing of this batch
         TributaryDb::recognize_topic(
           self.tributary_txn,
           self.set,
@@ -293,7 +313,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
           self.validators,
           self.total_weight,
           block_number,
-          Topic::SlashReport,
+          topic.unwrap(),
           signer,
           self.validator_weights[&signer],
           &slash_points,
@@ -351,7 +371,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
 
             // Create the resulting slash report
             let mut slash_report = vec![];
-            for (validator, points) in self.validators.iter().copied().zip(amortized_slash_report) {
+            for (_, points) in self.validators.iter().copied().zip(amortized_slash_report) {
               // TODO: Natively store this as a `Slash`
               if points == u32::MAX {
                 slash_report.push(Slash::Fatal);
@@ -385,7 +405,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
       }
 
       Transaction::Sign { id, attempt, round, data, signed } => {
-        let topic = Topic::Sign { id, attempt, round };
+        let topic = topic.unwrap();
         let signer = signer(signed);
 
         if u64::try_from(data.len()).unwrap() != self.validator_weights[&signer] {

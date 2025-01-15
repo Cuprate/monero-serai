@@ -15,20 +15,35 @@ use crate::transaction::SigningProtocolRound;
 
 /// A topic within the database which the group participates in
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Encode, BorshSerialize, BorshDeserialize)]
-pub(crate) enum Topic {
+pub enum Topic {
   /// Vote to remove a participant
-  RemoveParticipant { participant: SeraiAddress },
+  RemoveParticipant {
+    /// The participant to remove
+    participant: SeraiAddress,
+  },
 
   // DkgParticipation isn't represented here as participations are immediately sent to the
   // processor, not accumulated within this databse
   /// Participation in the signing protocol to confirm the DKG results on Substrate
-  DkgConfirmation { attempt: u32, round: SigningProtocolRound },
+  DkgConfirmation {
+    /// The attempt number this is for
+    attempt: u32,
+    /// The round of the signing protocol
+    round: SigningProtocolRound,
+  },
 
   /// The local view of the SlashReport, to be aggregated into the final SlashReport
   SlashReport,
 
   /// Participation in a signing protocol
-  Sign { id: VariantSignId, attempt: u32, round: SigningProtocolRound },
+  Sign {
+    /// The ID of the signing protocol
+    id: VariantSignId,
+    /// The attempt number this is for
+    attempt: u32,
+    /// The round of the signing protocol
+    round: SigningProtocolRound,
+  },
 }
 
 enum Participating {
@@ -138,16 +153,17 @@ impl Topic {
     }
   }
 
-  fn requires_whitelisting(&self) -> bool {
+  /// If this topic requires recognition before entries are permitted for it.
+  pub fn requires_recognition(&self) -> bool {
     #[allow(clippy::match_same_arms)]
     match self {
-      // We don't require whitelisting to remove a participant
+      // We don't require recognition to remove a participant
       Topic::RemoveParticipant { .. } => false,
-      // We don't require whitelisting for the first attempt, solely the re-attempts
+      // We don't require recognition for the first attempt, solely the re-attempts
       Topic::DkgConfirmation { attempt, .. } => *attempt != 0,
-      // We don't require whitelisting for the slash report
+      // We don't require recognition for the slash report
       Topic::SlashReport { .. } => false,
-      // We do require whitelisting for every sign protocol
+      // We do require recognition for every sign protocol
       Topic::Sign { .. } => true,
     }
   }
@@ -198,7 +214,7 @@ create_db!(
     // If this block has already been cosigned.
     Cosigned: (set: ValidatorSet, substrate_block_hash: [u8; 32]) -> (),
 
-    // The plans to whitelist upon a `Transaction::SubstrateBlock` being included on-chain.
+    // The plans to recognize upon a `Transaction::SubstrateBlock` being included on-chain.
     SubstrateBlockPlans: (set: ValidatorSet, substrate_block_hash: [u8; 32]) -> Vec<[u8; 32]>,
 
     // The weight accumulated for a topic.
@@ -214,6 +230,7 @@ create_db!(
 db_channel!(
   CoordinatorTributary {
     ProcessorMessages: (set: ValidatorSet) -> messages::CoordinatorMessage,
+    RecognizedTopics: (set: ValidatorSet) -> Topic,
   }
 );
 
@@ -262,7 +279,7 @@ impl TributaryDb {
     );
     ActivelyCosigning::set(txn, set, &substrate_block_hash);
 
-    TributaryDb::recognize_topic(
+    Self::recognize_topic(
       txn,
       set,
       Topic::Sign {
@@ -292,6 +309,10 @@ impl TributaryDb {
 
   pub(crate) fn recognize_topic(txn: &mut impl DbTxn, set: ValidatorSet, topic: Topic) {
     AccumulatedWeight::set(txn, set, topic, &0);
+    RecognizedTopics::send(txn, set, &topic);
+  }
+  pub(crate) fn recognized(getter: &impl Get, set: ValidatorSet, topic: Topic) -> bool {
+    AccumulatedWeight::get(getter, set, topic).is_some()
   }
 
   pub(crate) fn start_of_block(txn: &mut impl DbTxn, set: ValidatorSet, block_number: u64) {
@@ -350,8 +371,13 @@ impl TributaryDb {
     // nonces on transactions (deterministically to the topic)
 
     let accumulated_weight = AccumulatedWeight::get(txn, set, topic);
-    if topic.requires_whitelisting() && accumulated_weight.is_none() {
-      Self::fatal_slash(txn, set, validator, "participated in unrecognized topic");
+    if topic.requires_recognition() && accumulated_weight.is_none() {
+      Self::fatal_slash(
+        txn,
+        set,
+        validator,
+        "participated in unrecognized topic which requires recognition",
+      );
       return DataSet::None;
     }
     let mut accumulated_weight = accumulated_weight.unwrap_or(0);

@@ -25,6 +25,8 @@ use tributary_sdk::{
   },
 };
 
+use crate::db::Topic;
+
 /// The round this data is for, within a signing protocol.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Encode, BorshSerialize, BorshDeserialize)]
 pub enum SigningProtocolRound {
@@ -180,7 +182,7 @@ pub enum Transaction {
   ///
   /// This is provided after the block has been cosigned.
   ///
-  /// With the acknowledgement of a Substrate block, we can whitelist all the `VariantSignId`s
+  /// With the acknowledgement of a Substrate block, we can recognize all the `VariantSignId`s
   /// resulting from its handling.
   SubstrateBlock {
     /// The hash of the Substrate block
@@ -318,6 +320,36 @@ impl TransactionTrait for Transaction {
 }
 
 impl Transaction {
+  /// The topic in the database for this transaction.
+  pub fn topic(&self) -> Option<Topic> {
+    #[allow(clippy::match_same_arms)] // This doesn't make semantic sense here
+    match self {
+      Transaction::RemoveParticipant { participant, .. } => {
+        Some(Topic::RemoveParticipant { participant: *participant })
+      }
+
+      Transaction::DkgParticipation { .. } => None,
+      Transaction::DkgConfirmationPreprocess { attempt, .. } => {
+        Some(Topic::DkgConfirmation { attempt: *attempt, round: SigningProtocolRound::Preprocess })
+      }
+      Transaction::DkgConfirmationShare { attempt, .. } => {
+        Some(Topic::DkgConfirmation { attempt: *attempt, round: SigningProtocolRound::Share })
+      }
+
+      // Provided TXs
+      Transaction::Cosign { .. } |
+      Transaction::Cosigned { .. } |
+      Transaction::SubstrateBlock { .. } |
+      Transaction::Batch { .. } => None,
+
+      Transaction::Sign { id, attempt, round, .. } => {
+        Some(Topic::Sign { id: *id, attempt: *attempt, round: *round })
+      }
+
+      Transaction::SlashReport { .. } => Some(Topic::SlashReport),
+    }
+  }
+
   /// Sign a transaction.
   ///
   /// Panics if signing a transaction whose type isn't `TransactionKind::Signed`.
