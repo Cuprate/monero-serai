@@ -210,6 +210,30 @@ impl Slash {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SlashReport(pub BoundedVec<Slash, ConstU32<{ MAX_KEY_SHARES_PER_SET_U32 }>>);
 
+#[cfg(feature = "borsh")]
+impl BorshSerialize for SlashReport {
+  fn serialize<W: borsh::io::Write>(&self, writer: &mut W) -> borsh::io::Result<()> {
+    BorshSerialize::serialize(self.0.as_slice(), writer)
+  }
+}
+#[cfg(feature = "borsh")]
+impl BorshDeserialize for SlashReport {
+  fn deserialize_reader<R: borsh::io::Read>(reader: &mut R) -> borsh::io::Result<Self> {
+    let slashes = Vec::<Slash>::deserialize_reader(reader)?;
+    slashes
+      .try_into()
+      .map(Self)
+      .map_err(|_| borsh::io::Error::other("length of slash report exceeds max validators"))
+  }
+}
+
+impl TryFrom<Vec<Slash>> for SlashReport {
+  type Error = &'static str;
+  fn try_from(slashes: Vec<Slash>) -> Result<SlashReport, &'static str> {
+    slashes.try_into().map(Self).map_err(|_| "length of slash report exceeds max validators")
+  }
+}
+
 // This is assumed binding to the ValidatorSet via the key signed with
 pub fn report_slashes_message(slashes: &SlashReport) -> Vec<u8> {
   (b"ValidatorSets-report_slashes", slashes).encode()

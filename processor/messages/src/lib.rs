@@ -7,7 +7,7 @@ use borsh::{BorshSerialize, BorshDeserialize};
 use dkg::Participant;
 
 use serai_primitives::BlockHash;
-use validator_sets_primitives::{Session, KeyPair, Slash};
+use validator_sets_primitives::{Session, KeyPair, SlashReport};
 use coins_primitives::OutInstructionWithBalance;
 use in_instructions_primitives::SignedBatch;
 
@@ -100,7 +100,9 @@ pub mod sign {
         Self::Cosign(cosign) => {
           f.debug_struct("VariantSignId::Cosign").field("0", &cosign).finish()
         }
-        Self::Batch(batch) => f.debug_struct("VariantSignId::Batch").field("0", &batch).finish(),
+        Self::Batch(batch) => {
+          f.debug_struct("VariantSignId::Batch").field("0", &hex::encode(batch)).finish()
+        }
         Self::SlashReport => f.debug_struct("VariantSignId::SlashReport").finish(),
         Self::Transaction(tx) => {
           f.debug_struct("VariantSignId::Transaction").field("0", &hex::encode(tx)).finish()
@@ -168,7 +170,7 @@ pub mod coordinator {
     /// Sign the slash report for this session.
     ///
     /// This is sent by the Coordinator's Tributary scanner.
-    SignSlashReport { session: Session, report: Vec<Slash> },
+    SignSlashReport { session: Session, slash_report: SlashReport },
   }
 
   // This set of messages is sent entirely and solely by serai-processor-bin's implementation of
@@ -178,7 +180,7 @@ pub mod coordinator {
   pub enum ProcessorMessage {
     CosignedBlock { cosign: SignedCosign },
     SignedBatch { batch: SignedBatch },
-    SignedSlashReport { session: Session, signature: Vec<u8> },
+    SignedSlashReport { session: Session, slash_report: SlashReport, signature: [u8; 64] },
   }
 }
 

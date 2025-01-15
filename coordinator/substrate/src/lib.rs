@@ -6,8 +6,8 @@ use scale::{Encode, Decode};
 use borsh::{io, BorshSerialize, BorshDeserialize};
 
 use serai_client::{
-  primitives::{NetworkId, PublicKey, Signature, SeraiAddress},
-  validator_sets::primitives::{Session, ValidatorSet, KeyPair},
+  primitives::{NetworkId, PublicKey, Signature},
+  validator_sets::primitives::{Session, ValidatorSet, KeyPair, SlashReport},
   in_instructions::primitives::SignedBatch,
   Transaction,
 };
@@ -183,10 +183,6 @@ impl SignedBatches {
   }
 }
 
-/// The slash report was invalid.
-#[derive(Debug)]
-pub struct InvalidSlashReport;
-
 /// The slash reports to publish onto Serai.
 pub struct SlashReports;
 impl SlashReports {
@@ -194,30 +190,25 @@ impl SlashReports {
   ///
   /// This only saves the most recent slashes as only a single session is eligible to have its
   /// slashes reported at once.
-  ///
-  /// Returns Err if the slashes are invalid. Returns Ok if the slashes weren't detected as
-  /// invalid. Slashes may be considered invalid by the Serai blockchain later even if not detected
-  /// as invalid here.
   pub fn set(
     txn: &mut impl DbTxn,
     set: ValidatorSet,
-    slashes: Vec<(SeraiAddress, u32)>,
+    slash_report: SlashReport,
     signature: Signature,
-  ) -> Result<(), InvalidSlashReport> {
+  ) {
     // If we have a more recent slash report, don't write this historic one
     if let Some((existing_session, _)) = _public_db::SlashReports::get(txn, set.network) {
       if existing_session.0 >= set.session.0 {
-        return Ok(());
+        return;
       }
     }
 
     let tx = serai_client::validator_sets::SeraiValidatorSets::report_slashes(
       set.network,
-      slashes.try_into().map_err(|_| InvalidSlashReport)?,
+      slash_report,
       signature,
     );
     _public_db::SlashReports::set(txn, set.network, &(set.session, tx.encode()));
-    Ok(())
   }
   pub(crate) fn take(txn: &mut impl DbTxn, network: NetworkId) -> Option<(Session, Transaction)> {
     let (session, tx) = _public_db::SlashReports::take(txn, network)?;

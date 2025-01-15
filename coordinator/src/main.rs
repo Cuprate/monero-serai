@@ -14,7 +14,7 @@ use borsh::BorshDeserialize;
 use tokio::sync::mpsc;
 
 use serai_client::{
-  primitives::{NetworkId, PublicKey},
+  primitives::{NetworkId, PublicKey, Signature},
   validator_sets::primitives::ValidatorSet,
   Serai,
 };
@@ -25,6 +25,7 @@ use serai_task::{Task, TaskHandle, ContinuallyRan};
 use serai_cosign::{Faulted, SignedCosign, Cosigning};
 use serai_coordinator_substrate::{
   CanonicalEventStream, EphemeralEventStream, SignSlashReport, SignedBatches, PublishBatchTask,
+  SlashReports, PublishSlashReportTask,
 };
 use serai_coordinator_tributary::{SigningProtocolRound, Signed, Transaction, SubstrateBlockPlans};
 
@@ -161,6 +162,7 @@ async fn handle_network(
         .unwrap()
         .continually_run(publish_batch_task_def, vec![]),
     );
+    // Forget its handle so it always runs in the background
     core::mem::forget(publish_batch_task);
   }
 
@@ -274,8 +276,17 @@ async fn handle_network(
         messages::coordinator::ProcessorMessage::SignedBatch { batch } => {
           SignedBatches::send(&mut txn, &batch);
         }
-        messages::coordinator::ProcessorMessage::SignedSlashReport { session, signature } => {
-          todo!("TODO PublishSlashReportTask")
+        messages::coordinator::ProcessorMessage::SignedSlashReport {
+          session,
+          slash_report,
+          signature,
+        } => {
+          SlashReports::set(
+            &mut txn,
+            ValidatorSet { network, session },
+            slash_report,
+            Signature(signature),
+          );
         }
       },
       messages::ProcessorMessage::Substrate(msg) => match msg {
@@ -470,6 +481,16 @@ async fn main() {
       continue;
     }
     tokio::spawn(handle_network(db.clone(), message_queue.clone(), serai.clone(), network));
+  }
+
+  // Spawn the task to publish slash reports
+  {
+    let (publish_slash_report_task_def, publish_slash_report_task) = Task::new();
+    tokio::spawn(
+      PublishSlashReportTask::new(db, serai).continually_run(publish_slash_report_task_def, vec![]),
+    );
+    // Always have this run in the background
+    core::mem::forget(publish_slash_report_task);
   }
 
   // Run the spawned tasks ad-infinitum

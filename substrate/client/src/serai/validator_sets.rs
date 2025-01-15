@@ -5,10 +5,10 @@ use sp_runtime::BoundedVec;
 
 use serai_abi::primitives::Amount;
 pub use serai_abi::validator_sets::primitives;
-use primitives::{MAX_KEY_LEN, Session, ValidatorSet, KeyPair};
+use primitives::{MAX_KEY_LEN, Session, ValidatorSet, KeyPair, SlashReport};
 
 use crate::{
-  primitives::{EmbeddedEllipticCurve, NetworkId, SeraiAddress},
+  primitives::{EmbeddedEllipticCurve, NetworkId},
   Transaction, Serai, TemporalSerai, SeraiError,
 };
 
@@ -238,12 +238,7 @@ impl<'a> SeraiValidatorSets<'a> {
 
   pub fn report_slashes(
     network: NetworkId,
-    // TODO: This bounds a maximum length but takes more space than just publishing all the u32s
-    // (50 * (32 + 4)) > (150 * 4)
-    slashes: sp_runtime::BoundedVec<
-      (SeraiAddress, u32),
-      sp_core::ConstU32<{ primitives::MAX_KEY_SHARES_PER_SET_U32 / 3 }>,
-    >,
+    slashes: SlashReport,
     signature: Signature,
   ) -> Transaction {
     Serai::unsigned(serai_abi::Call::ValidatorSets(

@@ -111,13 +111,7 @@ impl From<Call> for RuntimeCall {
         serai_abi::validator_sets::Call::report_slashes { network, slashes, signature } => {
           RuntimeCall::ValidatorSets(validator_sets::Call::report_slashes {
             network,
-            slashes: <_>::try_from(
-              slashes
-                .into_iter()
-                .map(|(addr, slash)| (PublicKey::from(addr), slash))
-                .collect::<Vec<_>>(),
-            )
-            .unwrap(),
+            slashes,
             signature,
           })
         }
@@ -301,17 +295,7 @@ impl TryInto<Call> for RuntimeCall {
           }
         }
         validator_sets::Call::report_slashes { network, slashes, signature } => {
-          serai_abi::validator_sets::Call::report_slashes {
-            network,
-            slashes: <_>::try_from(
-              slashes
-                .into_iter()
-                .map(|(addr, slash)| (SeraiAddress::from(addr), slash))
-                .collect::<Vec<_>>(),
-            )
-            .unwrap(),
-            signature,
-          }
+          serai_abi::validator_sets::Call::report_slashes { network, slashes, signature }
         }
         validator_sets::Call::allocate { network, amount } => {
           serai_abi::validator_sets::Call::allocate { network, amount }

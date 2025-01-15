@@ -1010,7 +1010,7 @@ pub mod pallet {
     pub fn report_slashes(
       origin: OriginFor<T>,
       network: NetworkId,
-      slashes: BoundedVec<(Public, u32), ConstU32<{ MAX_KEY_SHARES_PER_SET_U32 / 3 }>>,
+      slashes: SlashReport,
       signature: Signature,
     ) -> DispatchResult {
       ensure_none(origin)?;

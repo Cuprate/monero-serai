@@ -371,7 +371,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
 
             // Create the resulting slash report
             let mut slash_report = vec![];
-            for (_, points) in self.validators.iter().copied().zip(amortized_slash_report) {
+            for points in amortized_slash_report {
               // TODO: Natively store this as a `Slash`
               if points == u32::MAX {
                 slash_report.push(Slash::Fatal);
@@ -397,7 +397,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
               self.set,
               messages::coordinator::CoordinatorMessage::SignSlashReport {
                 session: self.set.session,
-                report: slash_report,
+                slash_report: slash_report.try_into().unwrap(),
               },
             );
           }
