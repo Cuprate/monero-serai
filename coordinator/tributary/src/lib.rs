@@ -5,8 +5,6 @@
 use core::{marker::PhantomData, future::Future};
 use std::collections::HashMap;
 
-use scale::Encode;
-
 use ciphersuite::group::GroupEncoding;
 use dkg::Participant;
 
@@ -184,7 +182,6 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
     &mut self,
     block_number: u64,
     topic: Topic,
-    attempt: u32,
     data: &D,
     signer: SeraiAddress,
   ) -> Option<(SignId, HashMap<Participant, Vec<u8>>)> {
@@ -201,14 +198,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
     ) {
       DataSet::None => None,
       DataSet::Participating(data_set) => {
-        // Consistent ID for the DKG confirmation, unqie across sets
-        let id = {
-          let mut id = [0; 32];
-          let encoded_set = self.set.set.encode();
-          id[.. encoded_set.len()].copy_from_slice(&encoded_set);
-          VariantSignId::Batch(id)
-        };
-        let id = SignId { session: self.set.set.session, id, attempt };
+        let id = topic.dkg_confirmation_sign_id(self.set.set).unwrap();
 
         // This will be used in a MuSig protocol, so the Participant indexes are the validator's
         // position in the list regardless of their weight
@@ -222,8 +212,11 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
               .enumerate()
               .find(|(_i, (validator_i, _weight))| validator == *validator_i)
               .unwrap();
+            // The index is zero-indexed yet participants are one-indexed
+            let index = index + 1;
+
             entries.insert(
-              Participant::new(u16::try_from(*index).unwrap()).unwrap(),
+              Participant::new(u16::try_from(index).unwrap()).unwrap(),
               participation.as_ref().to_vec(),
             );
           }
@@ -302,12 +295,12 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
           },
         );
       }
-      Transaction::DkgConfirmationPreprocess { attempt, preprocess, signed } => {
+      Transaction::DkgConfirmationPreprocess { attempt: _, preprocess, signed } => {
         let topic = topic.unwrap();
         let signer = signer(signed);
 
         let Some((id, data_set)) =
-          self.accumulate_dkg_confirmation(block_number, topic, attempt, &preprocess, signer)
+          self.accumulate_dkg_confirmation(block_number, topic, &preprocess, signer)
         else {
           return;
         };
@@ -318,12 +311,12 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
           &messages::sign::CoordinatorMessage::Preprocesses { id, preprocesses: data_set },
         );
       }
-      Transaction::DkgConfirmationShare { attempt, share, signed } => {
+      Transaction::DkgConfirmationShare { attempt: _, share, signed } => {
         let topic = topic.unwrap();
         let signer = signer(signed);
 
         let Some((id, data_set)) =
-          self.accumulate_dkg_confirmation(block_number, topic, attempt, &share, signer)
+          self.accumulate_dkg_confirmation(block_number, topic, &share, signer)
         else {
           return;
         };

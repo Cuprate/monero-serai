@@ -25,13 +25,13 @@ rand_core = { version = "0.6", default-features = false, features = ["std"] }
 blake2 = { version = "0.10", default-features = false, features = ["std"] }
 schnorrkel = { version = "0.11", default-features = false, features = ["std"] }
 
-ciphersuite = { path = "../crypto/ciphersuite", default-features = false, features = ["std"] }
+ciphersuite = { path = "../crypto/ciphersuite", default-features = false, features = ["std", "ristretto"] }
 dkg = { path = "../crypto/dkg", default-features = false, features = ["std"] }
-schnorr = { package = "schnorr-signatures", path = "../crypto/schnorr", default-features = false, features = ["std"] }
-frost = { package = "modular-frost", path = "../crypto/frost" }
 frost-schnorrkel = { path = "../crypto/schnorrkel" }
 
+hex = { version = "0.4", default-features = false, features = ["std"] }
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["std", "derive", "bit-vec"] }
+borsh = { version = "1", default-features = false, features = ["std", "derive", "de_strict_order"] }
 
 zalloc = { path = "../common/zalloc" }
 serai-db = { path = "../common/db" }
@@ -43,9 +43,6 @@ message-queue = { package = "serai-message-queue", path = "../message-queue" }
 tributary-sdk = { path = "./tributary-sdk" }
 
 serai-client = { path = "../substrate/client", default-features = false, features = ["serai", "borsh"] }
-
-hex = { version = "0.4", default-features = false, features = ["std"] }
-borsh = { version = "1", default-features = false, features = ["std", "derive", "de_strict_order"] }
 
 log = { version = "0.4", default-features = false, features = ["std"] }
 env_logger = { version = "0.10", default-features = false, features = ["humantime"] }

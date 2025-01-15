@@ -94,9 +94,9 @@ impl Topic {
     }
   }
 
-  // The SignId for this topic
-  //
-  // Returns None if Topic isn't Topic::Sign
+  /// The SignId for this topic
+  ///
+  /// Returns None if Topic isn't Topic::Sign
   pub(crate) fn sign_id(self, set: ValidatorSet) -> Option<messages::sign::SignId> {
     #[allow(clippy::match_same_arms)]
     match self {
@@ -104,6 +104,33 @@ impl Topic {
       Topic::DkgConfirmation { .. } => None,
       Topic::SlashReport { .. } => None,
       Topic::Sign { id, attempt, round: _ } => Some(SignId { session: set.session, id, attempt }),
+    }
+  }
+
+  /// The SignId for this DKG Confirmation.
+  ///
+  /// This is undefined except for being consistent to the DKG Confirmation signing protocol and
+  /// unique across sets.
+  ///
+  /// Returns None if Topic isn't Topic::DkgConfirmation.
+  pub(crate) fn dkg_confirmation_sign_id(
+    self,
+    set: ValidatorSet,
+  ) -> Option<messages::sign::SignId> {
+    #[allow(clippy::match_same_arms)]
+    match self {
+      Topic::RemoveParticipant { .. } => None,
+      Topic::DkgConfirmation { attempt, round: _ } => Some({
+        let id = {
+          let mut id = [0; 32];
+          let encoded_set = set.encode();
+          id[.. encoded_set.len()].copy_from_slice(&encoded_set);
+          VariantSignId::Batch(id)
+        };
+        SignId { session: set.session, id, attempt }
+      }),
+      Topic::SlashReport { .. } => None,
+      Topic::Sign { .. } => None,
     }
   }
 
@@ -337,6 +364,12 @@ impl TributaryDb {
       Self::recognize_topic(txn, set, topic);
       if let Some(id) = topic.sign_id(set) {
         Self::send_message(txn, set, messages::sign::CoordinatorMessage::Reattempt { id });
+      } else if let Some(id) = topic.dkg_confirmation_sign_id(set) {
+        DkgConfirmationMessages::send(
+          txn,
+          set,
+          &messages::sign::CoordinatorMessage::Reattempt { id },
+        );
       }
     }
   }

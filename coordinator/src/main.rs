@@ -24,8 +24,8 @@ use serai_task::{Task, TaskHandle, ContinuallyRan};
 
 use serai_cosign::{Faulted, SignedCosign, Cosigning};
 use serai_coordinator_substrate::{
-  CanonicalEventStream, EphemeralEventStream, SignSlashReport, SignedBatches, PublishBatchTask,
-  SlashReports, PublishSlashReportTask,
+  CanonicalEventStream, EphemeralEventStream, SignSlashReport, SetKeysTask, SignedBatches,
+  PublishBatchTask, SlashReports, PublishSlashReportTask,
 };
 use serai_coordinator_tributary::{SigningProtocolRound, Signed, Transaction, SubstrateBlockPlans};
 
@@ -207,7 +207,7 @@ async fn handle_network(
           session,
           substrate_key,
           network_key,
-        } => todo!("TODO Transaction::DkgConfirmationPreprocess"),
+        } => todo!("TODO DkgConfirmationMessages, Transaction::DkgConfirmationPreprocess"),
         messages::key_gen::ProcessorMessage::Blame { session, participant } => {
           RemoveParticipant::send(&mut txn, ValidatorSet { network, session }, participant);
         }
@@ -220,7 +220,6 @@ async fn handle_network(
           let set = ValidatorSet { network, session: id.session };
           if id.attempt == 0 {
             // Batches are declared by their intent to be signed
-            // TODO: Document this in processor <-> coordinator rebuild issue
             if let messages::sign::VariantSignId::Batch(hash) = id.id {
               TributaryTransactions::send(&mut txn, set, &Transaction::Batch { hash });
             }
@@ -467,6 +466,16 @@ async fn main() {
       continue;
     }
     tokio::spawn(handle_network(db.clone(), message_queue.clone(), serai.clone(), network));
+  }
+
+  // Spawn the task to set keys
+  {
+    let (set_keys_task_def, set_keys_task) = Task::new();
+    tokio::spawn(
+      SetKeysTask::new(db.clone(), serai.clone()).continually_run(set_keys_task_def, vec![]),
+    );
+    // Forget its handle so it always runs in the background
+    core::mem::forget(set_keys_task);
   }
 
   // Spawn the task to publish slash reports
