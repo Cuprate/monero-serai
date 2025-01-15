@@ -1,13 +1,20 @@
 use core::future::Future;
 use std::sync::Arc;
 
-use serai_db::{DbTxn, Db};
+#[rustfmt::skip]
+use serai_client::{primitives::NetworkId, in_instructions::primitives::SignedBatch, SeraiError, Serai};
 
-use serai_client::{primitives::NetworkId, SeraiError, Serai};
-
+use serai_db::{Get, DbTxn, Db, create_db};
 use serai_task::ContinuallyRan;
 
 use crate::SignedBatches;
+
+create_db!(
+  CoordinatorSubstrate {
+    LastPublishedBatch: (network: NetworkId) -> u32,
+    BatchesToPublish: (network: NetworkId, batch: u32) -> SignedBatch,
+  }
+);
 
 /// Publish `SignedBatch`s from `SignedBatches` onto Serai.
 pub struct PublishBatchTask<D: Db> {
@@ -34,32 +41,50 @@ impl<D: Db> ContinuallyRan for PublishBatchTask<D> {
 
   fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
-      let mut made_progress = false;
-
+      // Read from SignedBatches, which is sequential, into our own mapping
       loop {
         let mut txn = self.db.txn();
         let Some(batch) = SignedBatches::try_recv(&mut txn, self.network) else {
-          // No batch to publish at this time
           break;
         };
 
-        // Publish this Batch if it hasn't already been published
+        // If this is a Batch not yet published, save it into our unordered mapping
+        if LastPublishedBatch::get(&txn, self.network) < Some(batch.batch.id) {
+          BatchesToPublish::set(&mut txn, self.network, batch.batch.id, &batch);
+        }
+
+        txn.commit();
+      }
+
+      // Synchronize our last published batch with the Serai network's
+      let next_to_publish = {
         let serai = self.serai.as_of_latest_finalized_block().await?;
         let last_batch = serai.in_instructions().last_batch_for_network(self.network).await?;
-        if last_batch < Some(batch.batch.id) {
-          // This stream of Batches *should* be sequential within the larger context of the Serai
-          // coordinator. In this library, we use a more relaxed definition and don't assert
-          // sequence. This does risk hanging the task, if Batch #n+1 is sent before Batch #n, but
-          // that is a documented fault of the `SignedBatches` API.
+
+        let mut txn = self.db.txn();
+        let mut our_last_batch = LastPublishedBatch::get(&txn, self.network);
+        while our_last_batch < last_batch {
+          let next_batch = our_last_batch.map(|batch| batch + 1).unwrap_or(0);
+          // Clean up the Batch to publish since it's already been published
+          BatchesToPublish::take(&mut txn, self.network, next_batch);
+          our_last_batch = Some(next_batch);
+        }
+        if let Some(last_batch) = our_last_batch {
+          LastPublishedBatch::set(&mut txn, self.network, &last_batch);
+        }
+        last_batch.map(|batch| batch + 1).unwrap_or(0)
+      };
+
+      let made_progress =
+        if let Some(batch) = BatchesToPublish::get(&self.db, self.network, next_to_publish) {
           self
             .serai
             .publish(&serai_client::in_instructions::SeraiInInstructions::execute_batch(batch))
             .await?;
-        }
-
-        txn.commit();
-        made_progress = true;
-      }
+          true
+        } else {
+          false
+        };
       Ok(made_progress)
     }
   }

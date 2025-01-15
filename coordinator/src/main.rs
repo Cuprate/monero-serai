@@ -23,7 +23,9 @@ use message_queue::{Service, client::MessageQueue};
 use serai_task::{Task, TaskHandle, ContinuallyRan};
 
 use serai_cosign::{Faulted, SignedCosign, Cosigning};
-use serai_coordinator_substrate::{CanonicalEventStream, EphemeralEventStream, SignSlashReport};
+use serai_coordinator_substrate::{
+  CanonicalEventStream, EphemeralEventStream, SignSlashReport, SignedBatches, PublishBatchTask,
+};
 use serai_coordinator_tributary::{SigningProtocolRound, Signed, Transaction, SubstrateBlockPlans};
 
 mod db;
@@ -145,11 +147,24 @@ fn spawn_cosigning<D: serai_db::Db>(
   });
 }
 
-async fn handle_processor_messages(
+async fn handle_network(
   mut db: impl serai_db::Db,
   message_queue: Arc<MessageQueue>,
+  serai: Arc<Serai>,
   network: NetworkId,
 ) {
+  // Spawn the task to publish batches for this network
+  {
+    let (publish_batch_task_def, publish_batch_task) = Task::new();
+    tokio::spawn(
+      PublishBatchTask::new(db.clone(), serai.clone(), network)
+        .unwrap()
+        .continually_run(publish_batch_task_def, vec![]),
+    );
+    core::mem::forget(publish_batch_task);
+  }
+
+  // Handle Processor messages
   loop {
     let (msg_id, msg) = {
       let msg = message_queue.next(Service::Processor(network)).await;
@@ -257,7 +272,7 @@ async fn handle_processor_messages(
           SignedCosigns::send(&mut txn, &cosign);
         }
         messages::coordinator::ProcessorMessage::SignedBatch { batch } => {
-          todo!("TODO PublishBatchTask")
+          SignedBatches::send(&mut txn, &batch);
         }
         messages::coordinator::ProcessorMessage::SignedSlashReport { session, signature } => {
           todo!("TODO PublishSlashReportTask")
@@ -449,12 +464,12 @@ async fn main() {
     .continually_run(substrate_task_def, vec![]),
   );
 
-  // Handle all of the Processors' messages
+  // Handle each of the networks
   for network in serai_client::primitives::NETWORKS {
     if network == NetworkId::Serai {
       continue;
     }
-    tokio::spawn(handle_processor_messages(db.clone(), message_queue.clone(), network));
+    tokio::spawn(handle_network(db.clone(), message_queue.clone(), serai.clone(), network));
   }
 
   // Run the spawned tasks ad-infinitum

@@ -175,8 +175,6 @@ impl Keys {
 pub struct SignedBatches;
 impl SignedBatches {
   /// Send a `SignedBatch` to publish onto Serai.
-  ///
-  /// These will be published sequentially. Out-of-order sending risks hanging the task.
   pub fn send(txn: &mut impl DbTxn, batch: &SignedBatch) {
     _public_db::SignedBatches::send(txn, batch.batch.network, batch);
   }
