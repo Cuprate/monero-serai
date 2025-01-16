@@ -80,6 +80,8 @@ create_db! {
     ErroneousCosigns: () -> Vec<SignedCosign>,
     // The keys to confirm and set on the Serai network
     KeysToConfirm: (set: ValidatorSet) -> KeyPair,
+    // The key was set on the Serai network
+    KeySet: (set: ValidatorSet) -> (),
   }
 }
 

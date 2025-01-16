@@ -368,6 +368,7 @@ async fn main() {
       prune_tributary_db(to_cleanup);
       // Remove the keys to confirm for this network
       KeysToConfirm::take(&mut txn, to_cleanup);
+      KeySet::take(&mut txn, to_cleanup);
       // Drain the cosign intents created for this set
       while !Cosigning::<Db>::intended_cosigns(&mut txn, to_cleanup).is_empty() {}
       // Drain the transactions to publish for this set
@@ -461,7 +462,6 @@ async fn main() {
       p2p.clone(),
       &p2p_add_tributary_send,
       tributary,
-      serai.clone(),
       serai_key.clone(),
     )
     .await;
@@ -476,7 +476,6 @@ async fn main() {
       p2p: p2p.clone(),
       p2p_add_tributary: p2p_add_tributary_send.clone(),
       p2p_retire_tributary: p2p_retire_tributary_send.clone(),
-      serai: serai.clone(),
     })
     .continually_run(substrate_task_def, vec![]),
   );

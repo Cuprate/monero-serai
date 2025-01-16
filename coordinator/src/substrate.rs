@@ -9,10 +9,7 @@ use tokio::sync::mpsc;
 
 use serai_db::{DbTxn, Db as DbTrait};
 
-use serai_client::{
-  validator_sets::primitives::{Session, ValidatorSet},
-  Serai,
-};
+use serai_client::validator_sets::primitives::{Session, ValidatorSet};
 use message_queue::{Service, Metadata, client::MessageQueue};
 
 use tributary_sdk::Tributary;
@@ -22,7 +19,7 @@ use serai_task::ContinuallyRan;
 use serai_coordinator_tributary::Transaction;
 use serai_coordinator_p2p::P2p;
 
-use crate::Db;
+use crate::{Db, KeySet};
 
 pub(crate) struct SubstrateTask<P: P2p> {
   pub(crate) serai_key: Zeroizing<<Ristretto as Ciphersuite>::F>,
@@ -32,7 +29,6 @@ pub(crate) struct SubstrateTask<P: P2p> {
   pub(crate) p2p_add_tributary:
     mpsc::UnboundedSender<(ValidatorSet, Tributary<Db, Transaction, P>)>,
   pub(crate) p2p_retire_tributary: mpsc::UnboundedSender<ValidatorSet>,
-  pub(crate) serai: Arc<Serai>,
 }
 
 impl<P: P2p> ContinuallyRan for SubstrateTask<P> {
@@ -51,8 +47,9 @@ impl<P: P2p> ContinuallyRan for SubstrateTask<P> {
           };
 
           match msg {
-            // TODO: Stop trying to confirm the DKG
-            messages::substrate::CoordinatorMessage::SetKeys { .. } => todo!("TODO"),
+            messages::substrate::CoordinatorMessage::SetKeys { session, .. } => {
+              KeySet::set(&mut txn, ValidatorSet { network, session }, &());
+            }
             messages::substrate::CoordinatorMessage::SlashesReported { session } => {
               let prior_retired = crate::db::RetiredTributary::get(&txn, network);
               let next_to_be_retired =
@@ -150,7 +147,6 @@ impl<P: P2p> ContinuallyRan for SubstrateTask<P> {
           self.p2p.clone(),
           &self.p2p_add_tributary,
           new_set,
-          self.serai.clone(),
           self.serai_key.clone(),
         )
         .await;

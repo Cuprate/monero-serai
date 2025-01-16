@@ -58,6 +58,8 @@ impl<D: Db> ContinuallyRan for PublishBatchTask<D> {
 
       // Synchronize our last published batch with the Serai network's
       let next_to_publish = {
+        // This uses the latest finalized block, not the latest cosigned block, which should be
+        // fine as in the worst case, the only impact is no longer attempting TX publication
         let serai = self.serai.as_of_latest_finalized_block().await?;
         let last_batch = serai.in_instructions().last_batch_for_network(self.network).await?;
 

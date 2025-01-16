@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use serai_db::{Get, DbTxn, Db as DbTrait, create_db, db_channel};
 
 use scale::Encode;
-use serai_client::{validator_sets::primitives::ValidatorSet, Serai};
+use serai_client::validator_sets::primitives::ValidatorSet;
 
 use tributary_sdk::{TransactionKind, TransactionError, ProvidedError, TransactionTrait, Tributary};
 
@@ -471,7 +471,6 @@ pub(crate) async fn spawn_tributary<P: P2p>(
   p2p: P,
   p2p_add_tributary: &mpsc::UnboundedSender<(ValidatorSet, Tributary<Db, Transaction, P>)>,
   set: NewSetInformation,
-  serai: Arc<Serai>,
   serai_key: Zeroizing<<Ristretto as Ciphersuite>::F>,
 ) {
   // Don't spawn retired Tributaries
@@ -566,7 +565,7 @@ pub(crate) async fn spawn_tributary<P: P2p>(
   // Spawn the task to confirm the DKG result
   let (confirm_dkg_task_def, confirm_dkg_task) = Task::new();
   tokio::spawn(
-    ConfirmDkgTask::new(db.clone(), set.clone(), tributary_db.clone(), serai, serai_key.clone())
+    ConfirmDkgTask::new(db.clone(), set.clone(), tributary_db.clone(), serai_key.clone())
       .continually_run(confirm_dkg_task_def, vec![add_tributary_transactions_task]),
   );
 

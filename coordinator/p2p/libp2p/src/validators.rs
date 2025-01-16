@@ -51,6 +51,14 @@ impl Validators {
     serai: impl Borrow<Serai>,
     sessions: impl Borrow<HashMap<NetworkId, Session>>,
   ) -> Result<Vec<(NetworkId, Session, HashSet<PeerId>)>, SeraiError> {
+    /*
+      This uses the latest finalized block, not the latest cosigned block, which should be fine as
+      in the worst case, we'd connect to unexpected validators. They still shouldn't be able to
+      bypass the cosign protocol unless a historical global session was malicious, in which case
+      the cosign protocol already breaks.
+
+      Besides, we can't connect to historical validators, only the current validators.
+    */
     let temporal_serai = serai.borrow().as_of_latest_finalized_block().await?;
     let temporal_serai = temporal_serai.validator_sets();
 

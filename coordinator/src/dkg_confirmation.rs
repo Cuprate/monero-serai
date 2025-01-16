@@ -1,5 +1,5 @@
 use core::{ops::Deref, future::Future};
-use std::{boxed::Box, sync::Arc, collections::HashMap};
+use std::{boxed::Box, collections::HashMap};
 
 use zeroize::Zeroizing;
 use rand_core::OsRng;
@@ -18,15 +18,14 @@ use serai_db::{DbTxn, Db as DbTrait};
 use serai_client::{
   primitives::SeraiAddress,
   validator_sets::primitives::{ValidatorSet, musig_context, set_keys_message},
-  SeraiError, Serai,
 };
 
-use serai_task::ContinuallyRan;
+use serai_task::{DoesNotError, ContinuallyRan};
 
 use serai_coordinator_substrate::{NewSetInformation, Keys};
 use serai_coordinator_tributary::{Transaction, DkgConfirmationMessages};
 
-use crate::{KeysToConfirm, TributaryTransactionsFromDkgConfirmation};
+use crate::{KeysToConfirm, KeySet, TributaryTransactionsFromDkgConfirmation};
 
 fn schnorrkel() -> Schnorrkel {
   Schnorrkel::new(b"substrate") // TODO: Pull the constant for this
@@ -128,8 +127,6 @@ pub(crate) struct ConfirmDkgTask<CD: DbTrait, TD: DbTrait> {
   set: NewSetInformation,
   tributary_db: TD,
 
-  serai: Arc<Serai>,
-
   key: Zeroizing<<Ristretto as Ciphersuite>::F>,
   signer: Option<Signer>,
 }
@@ -139,10 +136,9 @@ impl<CD: DbTrait, TD: DbTrait> ConfirmDkgTask<CD, TD> {
     db: CD,
     set: NewSetInformation,
     tributary_db: TD,
-    serai: Arc<Serai>,
     key: Zeroizing<<Ristretto as Ciphersuite>::F>,
   ) -> Self {
-    Self { db, set, tributary_db, serai, key, signer: None }
+    Self { db, set, tributary_db, key, signer: None }
   }
 
   fn slash(db: &mut CD, set: ValidatorSet, validator: SeraiAddress) {
@@ -192,7 +188,7 @@ impl<CD: DbTrait, TD: DbTrait> ConfirmDkgTask<CD, TD> {
 }
 
 impl<CD: DbTrait, TD: DbTrait> ContinuallyRan for ConfirmDkgTask<CD, TD> {
-  type Error = SeraiError;
+  type Error = DoesNotError;
 
   fn run_iteration(&mut self) -> impl Send + Future<Output = Result<bool, Self::Error>> {
     async move {
@@ -416,24 +412,20 @@ impl<CD: DbTrait, TD: DbTrait> ContinuallyRan for ConfirmDkgTask<CD, TD> {
       }
 
       // Check if the key has been set on Serai
-      if KeysToConfirm::get(&self.db, self.set.set).is_some() {
-        let serai = self.serai.as_of_latest_finalized_block().await?;
-        let serai = serai.validator_sets();
-        let is_historic_set = serai.session(self.set.set.network).await?.map(|session| session.0) >
-          Some(self.set.set.session.0);
-        let key_set_on_serai = is_historic_set || serai.keys(self.set.set).await?.is_some();
-        if key_set_on_serai {
-          // Take the keys to confirm so we never instantiate the signer again
-          let mut txn = self.db.txn();
-          KeysToConfirm::take(&mut txn, self.set.set);
-          txn.commit();
+      if KeysToConfirm::get(&self.db, self.set.set).is_some() &&
+        KeySet::get(&self.db, self.set.set).is_some()
+      {
+        // Take the keys to confirm so we never instantiate the signer again
+        let mut txn = self.db.txn();
+        KeysToConfirm::take(&mut txn, self.set.set);
+        KeySet::take(&mut txn, self.set.set);
+        txn.commit();
 
-          // Drop our own signer
-          // The task won't die until the Tributary does, but now it'll never do anything again
-          self.signer = None;
+        // Drop our own signer
+        // The task won't die until the Tributary does, but now it'll never do anything again
+        self.signer = None;
 
-          made_progress = true;
-        }
+        made_progress = true;
       }
 
       Ok(made_progress)
