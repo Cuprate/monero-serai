@@ -9,7 +9,10 @@ use tokio::sync::mpsc;
 
 use serai_db::{DbTxn, Db as DbTrait};
 
-use serai_client::validator_sets::primitives::{Session, ValidatorSet};
+use serai_client::{
+  validator_sets::primitives::{Session, ValidatorSet},
+  Serai,
+};
 use message_queue::{Service, Metadata, client::MessageQueue};
 
 use tributary_sdk::Tributary;
@@ -29,6 +32,7 @@ pub(crate) struct SubstrateTask<P: P2p> {
   pub(crate) p2p_add_tributary:
     mpsc::UnboundedSender<(ValidatorSet, Tributary<Db, Transaction, P>)>,
   pub(crate) p2p_retire_tributary: mpsc::UnboundedSender<ValidatorSet>,
+  pub(crate) serai: Arc<Serai>,
 }
 
 impl<P: P2p> ContinuallyRan for SubstrateTask<P> {
@@ -146,6 +150,7 @@ impl<P: P2p> ContinuallyRan for SubstrateTask<P> {
           self.p2p.clone(),
           &self.p2p_add_tributary,
           new_set,
+          self.serai.clone(),
           self.serai_key.clone(),
         )
         .await;

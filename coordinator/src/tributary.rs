@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use serai_db::{Get, DbTxn, Db as DbTrait, create_db, db_channel};
 
 use scale::Encode;
-use serai_client::validator_sets::primitives::ValidatorSet;
+use serai_client::{validator_sets::primitives::ValidatorSet, Serai};
 
 use tributary_sdk::{TransactionKind, TransactionError, ProvidedError, TransactionTrait, Tributary};
 
@@ -26,7 +26,10 @@ use serai_coordinator_tributary::{
 };
 use serai_coordinator_p2p::P2p;
 
-use crate::{Db, TributaryTransactions, RemoveParticipant};
+use crate::{
+  Db, TributaryTransactionsFromProcessorMessages, TributaryTransactionsFromDkgConfirmation,
+  RemoveParticipant, dkg_confirmation::ConfirmDkgTask,
+};
 
 create_db! {
   Coordinator {
@@ -172,6 +175,7 @@ async fn add_signed_unsigned_transaction<TD: DbTrait, P: P2p>(
     Ok(true | false) => {}
     // InvalidNonce may be out-of-order TXs, not invalid ones, but we only create nonce #n+1 after
     // on-chain inclusion of the TX with nonce #n, so it is invalid within our context
+    // TODO: We need to handle publishing #n when #n already on-chain
     Err(
       TransactionError::TooLargeTransaction |
       TransactionError::InvalidSigner |
@@ -192,7 +196,7 @@ async fn add_signed_unsigned_transaction<TD: DbTrait, P: P2p>(
   true
 }
 
-/// Adds all of the transactions sent via `TributaryTransactions`.
+/// Adds all of the transactions sent via `TributaryTransactionsFromProcessorMessages`.
 pub(crate) struct AddTributaryTransactionsTask<CD: DbTrait, TD: DbTrait, P: P2p> {
   db: CD,
   tributary_db: TD,
@@ -210,7 +214,19 @@ impl<CD: DbTrait, TD: DbTrait, P: P2p> ContinuallyRan for AddTributaryTransactio
       // Provide/add all transactions sent our way
       loop {
         let mut txn = self.db.txn();
-        let Some(tx) = TributaryTransactions::try_recv(&mut txn, self.set.set) else { break };
+        // This gives priority to DkgConfirmation as that will only yield transactions at the start
+        // of the Tributary, ensuring this will be exhausted and yield to ProcessorMessages
+        let tx = match TributaryTransactionsFromDkgConfirmation::try_recv(&mut txn, self.set.set) {
+          Some(tx) => tx,
+          None => {
+            let Some(tx) =
+              TributaryTransactionsFromProcessorMessages::try_recv(&mut txn, self.set.set)
+            else {
+              break;
+            };
+            tx
+          }
+        };
 
         let kind = tx.kind();
         match kind {
@@ -399,6 +415,8 @@ async fn scan_on_new_block<CD: DbTrait, TD: DbTrait, P: P2p>(
 /// - Spawn the ScanTributaryTask
 /// - Spawn the ProvideCosignCosignedTransactionsTask
 /// - Spawn the TributaryProcessorMessagesTask
+/// - Spawn the AddTributaryTransactionsTask
+/// - Spawn the ConfirmDkgTask
 /// - Spawn the SignSlashReportTask
 /// - Iterate the scan task whenever a new block occurs (not just on the standard interval)
 pub(crate) async fn spawn_tributary<P: P2p>(
@@ -407,6 +425,7 @@ pub(crate) async fn spawn_tributary<P: P2p>(
   p2p: P,
   p2p_add_tributary: &mpsc::UnboundedSender<(ValidatorSet, Tributary<Db, Transaction, P>)>,
   set: NewSetInformation,
+  serai: Arc<Serai>,
   serai_key: Zeroizing<<Ristretto as Ciphersuite>::F>,
 ) {
   // Don't spawn retired Tributaries
@@ -485,30 +504,37 @@ pub(crate) async fn spawn_tributary<P: P2p>(
       .continually_run(scan_tributary_task_def, vec![scan_tributary_messages_task]),
   );
 
-  // Spawn the sign slash report task
-  let (sign_slash_report_task_def, sign_slash_report_task) = Task::new();
+  // Spawn the add transactions task
+  let (add_tributary_transactions_task_def, add_tributary_transactions_task) = Task::new();
   tokio::spawn(
-    (SignSlashReportTask {
+    (AddTributaryTransactionsTask {
       db: db.clone(),
       tributary_db: tributary_db.clone(),
       tributary: tributary.clone(),
       set: set.clone(),
       key: serai_key.clone(),
     })
-    .continually_run(sign_slash_report_task_def, vec![]),
+    .continually_run(add_tributary_transactions_task_def, vec![]),
   );
 
-  // Spawn the add transactions task
-  let (add_tributary_transactions_task_def, add_tributary_transactions_task) = Task::new();
+  // Spawn the task to confirm the DKG result
+  let (confirm_dkg_task_def, confirm_dkg_task) = Task::new();
   tokio::spawn(
-    (AddTributaryTransactionsTask {
+    ConfirmDkgTask::new(db.clone(), set.clone(), tributary_db.clone(), serai, serai_key.clone())
+      .continually_run(confirm_dkg_task_def, vec![add_tributary_transactions_task]),
+  );
+
+  // Spawn the sign slash report task
+  let (sign_slash_report_task_def, sign_slash_report_task) = Task::new();
+  tokio::spawn(
+    (SignSlashReportTask {
       db: db.clone(),
       tributary_db,
       tributary: tributary.clone(),
       set: set.clone(),
       key: serai_key,
     })
-    .continually_run(add_tributary_transactions_task_def, vec![]),
+    .continually_run(sign_slash_report_task_def, vec![]),
   );
 
   // Whenever a new block occurs, immediately run the scan task
@@ -520,10 +546,6 @@ pub(crate) async fn spawn_tributary<P: P2p>(
     set.set,
     tributary,
     scan_tributary_task,
-    vec![
-      provide_cosign_cosigned_transactions_task,
-      sign_slash_report_task,
-      add_tributary_transactions_task,
-    ],
+    vec![provide_cosign_cosigned_transactions_task, confirm_dkg_task, sign_slash_report_task],
   ));
 }

@@ -7,7 +7,7 @@ use dkg::Participant;
 
 use serai_client::{
   primitives::NetworkId,
-  validator_sets::primitives::{Session, ValidatorSet},
+  validator_sets::primitives::{Session, ValidatorSet, KeyPair},
 };
 
 use serai_cosign::SignedCosign;
@@ -78,6 +78,8 @@ create_db! {
     LastProcessorMessage: (network: NetworkId) -> u64,
     // Cosigns we produced and tried to intake yet incurred an error while doing so
     ErroneousCosigns: () -> Vec<SignedCosign>,
+    // The keys to confirm and set on the Serai network
+    KeysToConfirm: (set: ValidatorSet) -> KeyPair,
   }
 }
 
@@ -95,24 +97,39 @@ mod _internal_db {
 
   db_channel! {
     Coordinator {
-      // Tributary transactions to publish
-      TributaryTransactions: (set: ValidatorSet) -> Transaction,
+      // Tributary transactions to publish from the Processor messages
+      TributaryTransactionsFromProcessorMessages: (set: ValidatorSet) -> Transaction,
+      // Tributary transactions to publish from the DKG confirmation task
+      TributaryTransactionsFromDkgConfirmation: (set: ValidatorSet) -> Transaction,
       // Participants to remove
       RemoveParticipant: (set: ValidatorSet) -> Participant,
     }
   }
 }
 
-pub(crate) struct TributaryTransactions;
-impl TributaryTransactions {
+pub(crate) struct TributaryTransactionsFromProcessorMessages;
+impl TributaryTransactionsFromProcessorMessages {
   pub(crate) fn send(txn: &mut impl DbTxn, set: ValidatorSet, tx: &Transaction) {
     // If this set has yet to be retired, send this transaction
     if RetiredTributary::get(txn, set.network).map(|session| session.0) < Some(set.session.0) {
-      _internal_db::TributaryTransactions::send(txn, set, tx);
+      _internal_db::TributaryTransactionsFromProcessorMessages::send(txn, set, tx);
     }
   }
   pub(crate) fn try_recv(txn: &mut impl DbTxn, set: ValidatorSet) -> Option<Transaction> {
-    _internal_db::TributaryTransactions::try_recv(txn, set)
+    _internal_db::TributaryTransactionsFromProcessorMessages::try_recv(txn, set)
+  }
+}
+
+pub(crate) struct TributaryTransactionsFromDkgConfirmation;
+impl TributaryTransactionsFromDkgConfirmation {
+  pub(crate) fn send(txn: &mut impl DbTxn, set: ValidatorSet, tx: &Transaction) {
+    // If this set has yet to be retired, send this transaction
+    if RetiredTributary::get(txn, set.network).map(|session| session.0) < Some(set.session.0) {
+      _internal_db::TributaryTransactionsFromDkgConfirmation::send(txn, set, tx);
+    }
+  }
+  pub(crate) fn try_recv(txn: &mut impl DbTxn, set: ValidatorSet) -> Option<Transaction> {
+    _internal_db::TributaryTransactionsFromDkgConfirmation::try_recv(txn, set)
   }
 }
 

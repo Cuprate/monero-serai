@@ -14,8 +14,8 @@ use borsh::BorshDeserialize;
 use tokio::sync::mpsc;
 
 use serai_client::{
-  primitives::{NetworkId, SeraiAddress, Signature},
-  validator_sets::primitives::ValidatorSet,
+  primitives::{NetworkId, PublicKey, SeraiAddress, Signature},
+  validator_sets::primitives::{ValidatorSet, KeyPair},
   Serai,
 };
 use message_queue::{Service, client::MessageQueue};
@@ -33,6 +33,7 @@ mod db;
 use db::*;
 
 mod tributary;
+mod dkg_confirmation;
 
 mod substrate;
 use substrate::SubstrateTask;
@@ -197,7 +198,7 @@ async fn handle_network(
       messages::ProcessorMessage::KeyGen(msg) => match msg {
         messages::key_gen::ProcessorMessage::Participation { session, participation } => {
           let set = ValidatorSet { network, session };
-          TributaryTransactions::send(
+          TributaryTransactionsFromProcessorMessages::send(
             &mut txn,
             set,
             &Transaction::DkgParticipation { participation, signed: Signed::default() },
@@ -207,7 +208,18 @@ async fn handle_network(
           session,
           substrate_key,
           network_key,
-        } => todo!("TODO DkgConfirmationMessages, Transaction::DkgConfirmationPreprocess"),
+        } => {
+          KeysToConfirm::set(
+            &mut txn,
+            ValidatorSet { network, session },
+            &KeyPair(
+              PublicKey::from_raw(substrate_key),
+              network_key
+                .try_into()
+                .expect("generated a network key which exceeds the maximum key length"),
+            ),
+          );
+        }
         messages::key_gen::ProcessorMessage::Blame { session, participant } => {
           RemoveParticipant::send(&mut txn, ValidatorSet { network, session }, participant);
         }
@@ -221,11 +233,15 @@ async fn handle_network(
           if id.attempt == 0 {
             // Batches are declared by their intent to be signed
             if let messages::sign::VariantSignId::Batch(hash) = id.id {
-              TributaryTransactions::send(&mut txn, set, &Transaction::Batch { hash });
+              TributaryTransactionsFromProcessorMessages::send(
+                &mut txn,
+                set,
+                &Transaction::Batch { hash },
+              );
             }
           }
 
-          TributaryTransactions::send(
+          TributaryTransactionsFromProcessorMessages::send(
             &mut txn,
             set,
             &Transaction::Sign {
@@ -239,7 +255,7 @@ async fn handle_network(
         }
         messages::sign::ProcessorMessage::Shares { id, shares } => {
           let set = ValidatorSet { network, session: id.session };
-          TributaryTransactions::send(
+          TributaryTransactionsFromProcessorMessages::send(
             &mut txn,
             set,
             &Transaction::Sign {
@@ -284,7 +300,7 @@ async fn handle_network(
           for (session, plans) in by_session {
             let set = ValidatorSet { network, session };
             SubstrateBlockPlans::set(&mut txn, set, block, &plans);
-            TributaryTransactions::send(
+            TributaryTransactionsFromProcessorMessages::send(
               &mut txn,
               set,
               &Transaction::SubstrateBlock { hash: block },
@@ -350,10 +366,13 @@ async fn main() {
     // Cleanup all historic Tributaries
     while let Some(to_cleanup) = TributaryCleanup::try_recv(&mut txn) {
       prune_tributary_db(to_cleanup);
+      // Remove the keys to confirm for this network
+      KeysToConfirm::take(&mut txn, to_cleanup);
       // Drain the cosign intents created for this set
       while !Cosigning::<Db>::intended_cosigns(&mut txn, to_cleanup).is_empty() {}
       // Drain the transactions to publish for this set
-      while TributaryTransactions::try_recv(&mut txn, to_cleanup).is_some() {}
+      while TributaryTransactionsFromProcessorMessages::try_recv(&mut txn, to_cleanup).is_some() {}
+      while TributaryTransactionsFromDkgConfirmation::try_recv(&mut txn, to_cleanup).is_some() {}
       // Drain the participants to remove for this set
       while RemoveParticipant::try_recv(&mut txn, to_cleanup).is_some() {}
       // Remove the SignSlashReport notification
@@ -442,6 +461,7 @@ async fn main() {
       p2p.clone(),
       &p2p_add_tributary_send,
       tributary,
+      serai.clone(),
       serai_key.clone(),
     )
     .await;
@@ -456,6 +476,7 @@ async fn main() {
       p2p: p2p.clone(),
       p2p_add_tributary: p2p_add_tributary_send.clone(),
       p2p_retire_tributary: p2p_retire_tributary_send.clone(),
+      serai: serai.clone(),
     })
     .continually_run(substrate_task_def, vec![]),
   );
