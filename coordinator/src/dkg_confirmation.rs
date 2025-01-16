@@ -373,7 +373,7 @@ impl<CD: DbTrait, TD: DbTrait> ContinuallyRan for ConfirmDkgTask<CD, TD> {
                     use bitvec::prelude::*;
                     signature_participants = bitvec![u8, Lsb0; 0; 0];
                     let mut i = 0;
-                    for (validator, _) in self.set.validators {
+                    for (validator, _) in &self.set.validators {
                       if Some(validator) == musig_validators.get(i) {
                         signature_participants.push(true);
                         i += 1;
