@@ -20,71 +20,71 @@ workspace = true
 name = "serai-node"
 
 [dependencies]
-rand_core = "0.6"
-zeroize = "1"
-hex = "0.4"
-log = "0.4"
+#rand_core = "0.6"
+#zeroize = "1"
+#hex = "0.4"
+#log = "0.4"
 
-schnorrkel = "0.11"
+#schnorrkel = "0.11"
 
-ciphersuite = { path = "../../crypto/ciphersuite" }
-embedwards25519 = { path = "../../crypto/evrf/embedwards25519" }
-secq256k1 = { path = "../../crypto/evrf/secq256k1" }
+#ciphersuite = { path = "../../crypto/ciphersuite" }
+#embedwards25519 = { path = "../../crypto/evrf/embedwards25519" }
+#secq256k1 = { path = "../../crypto/evrf/secq256k1" }
 
-libp2p = "0.52"
+#libp2p = "0.52"
 
-sp-core = { git = "https://github.com/serai-dex/substrate" }
-sp-keystore = { git = "https://github.com/serai-dex/substrate" }
-sp-timestamp = { git = "https://github.com/serai-dex/substrate" }
-sp-io = { git = "https://github.com/serai-dex/substrate" }
-sp-blockchain = { git = "https://github.com/serai-dex/substrate" }
-sp-api = { git = "https://github.com/serai-dex/substrate" }
-sp-block-builder = { git = "https://github.com/serai-dex/substrate" }
-sp-consensus-babe = { git = "https://github.com/serai-dex/substrate" }
+#sp-core = { git = "https://github.com/serai-dex/substrate" }
+#sp-keystore = { git = "https://github.com/serai-dex/substrate" }
+#sp-timestamp = { git = "https://github.com/serai-dex/substrate" }
+#sp-io = { git = "https://github.com/serai-dex/substrate" }
+#sp-blockchain = { git = "https://github.com/serai-dex/substrate" }
+#sp-api = { git = "https://github.com/serai-dex/substrate" }
+#sp-block-builder = { git = "https://github.com/serai-dex/substrate" }
+#sp-consensus-babe = { git = "https://github.com/serai-dex/substrate" }
 
-frame-benchmarking = { git = "https://github.com/serai-dex/substrate" }
+#frame-benchmarking = { git = "https://github.com/serai-dex/substrate" }
 
-serai-runtime = { path = "../runtime", features = ["std"] }
+#serai-runtime = { path = "../runtime", features = ["std"] }
 
-clap = { version = "4", features = ["derive"] }
+#clap = { version = "4", features = ["derive"] }
 
-futures-util = "0.3"
-tokio = { version = "1", features = ["sync", "rt-multi-thread"] }
-jsonrpsee = { version = "0.16", features = ["server"] }
+#futures-util = "0.3"
+#tokio = { version = "1", features = ["sync", "rt-multi-thread"] }
+#jsonrpsee = { version = "0.16", features = ["server"] }
 
-sc-offchain = { git = "https://github.com/serai-dex/substrate" }
-sc-transaction-pool = { git = "https://github.com/serai-dex/substrate" }
-sc-transaction-pool-api = { git = "https://github.com/serai-dex/substrate" }
-sc-basic-authorship = { git = "https://github.com/serai-dex/substrate" }
-sc-executor = { git = "https://github.com/serai-dex/substrate" }
-sc-service = { git = "https://github.com/serai-dex/substrate" }
-sc-client-api = { git = "https://github.com/serai-dex/substrate" }
-sc-network-common = { git = "https://github.com/serai-dex/substrate" }
-sc-network = { git = "https://github.com/serai-dex/substrate" }
+#sc-offchain = { git = "https://github.com/serai-dex/substrate" }
+#sc-transaction-pool = { git = "https://github.com/serai-dex/substrate" }
+#sc-transaction-pool-api = { git = "https://github.com/serai-dex/substrate" }
+#sc-basic-authorship = { git = "https://github.com/serai-dex/substrate" }
+#sc-executor = { git = "https://github.com/serai-dex/substrate" }
+#sc-service = { git = "https://github.com/serai-dex/substrate" }
+#sc-client-api = { git = "https://github.com/serai-dex/substrate" }
+#sc-network-common = { git = "https://github.com/serai-dex/substrate" }
+#sc-network = { git = "https://github.com/serai-dex/substrate" }
 
-sc-consensus = { git = "https://github.com/serai-dex/substrate" }
-sc-consensus-babe = { git = "https://github.com/serai-dex/substrate" }
-sc-consensus-grandpa = { git = "https://github.com/serai-dex/substrate" }
-sc-authority-discovery = { git = "https://github.com/serai-dex/substrate" }
+#sc-consensus = { git = "https://github.com/serai-dex/substrate" }
+#sc-consensus-babe = { git = "https://github.com/serai-dex/substrate" }
+#sc-consensus-grandpa = { git = "https://github.com/serai-dex/substrate" }
+#sc-authority-discovery = { git = "https://github.com/serai-dex/substrate" }
 
-sc-telemetry = { git = "https://github.com/serai-dex/substrate" }
-sc-cli = { git = "https://github.com/serai-dex/substrate" }
+#sc-telemetry = { git = "https://github.com/serai-dex/substrate" }
+#sc-cli = { git = "https://github.com/serai-dex/substrate" }
 
-sc-rpc-api = { git = "https://github.com/serai-dex/substrate" }
+#sc-rpc-api = { git = "https://github.com/serai-dex/substrate" }
 
-substrate-frame-rpc-system = { git = "https://github.com/serai-dex/substrate" }
-pallet-transaction-payment-rpc = { git = "https://github.com/serai-dex/substrate" }
+#substrate-frame-rpc-system = { git = "https://github.com/serai-dex/substrate" }
+#pallet-transaction-payment-rpc = { git = "https://github.com/serai-dex/substrate" }
 
-serai-env = { path = "../../common/env" }
+#serai-env = { path = "../../common/env" }
 
 [build-dependencies]
-substrate-build-script-utils = { git = "https://github.com/serai-dex/substrate" }
+#substrate-build-script-utils = { git = "https://github.com/serai-dex/substrate" }
 
 [features]
-default = []
-fast-epoch = ["serai-runtime/fast-epoch"]
-runtime-benchmarks = [
-  "frame-benchmarking/runtime-benchmarks",
+#default = []
+#fast-epoch = ["serai-runtime/fast-epoch"]
+#runtime-benchmarks = [
+#  "frame-benchmarking/runtime-benchmarks",
 
-  "serai-runtime/runtime-benchmarks",
-]
+#  "serai-runtime/runtime-benchmarks",
+#]
