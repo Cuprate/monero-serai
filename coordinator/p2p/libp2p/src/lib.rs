@@ -50,7 +50,7 @@ mod ping;
 
 /// The request-response messages and behavior
 mod reqres;
-use reqres::{RequestId, Request, Response};
+use reqres::{InboundRequestId, Request, Response};
 
 /// The gossip messages and behavior
 mod gossip;
@@ -65,14 +65,6 @@ mod dial;
 use dial::DialTask;
 
 const PORT: u16 = 30563; // 5132 ^ (('c' << 8) | 'o')
-
-// usize::max, manually implemented, as max isn't a const fn
-const MAX_LIBP2P_MESSAGE_SIZE: usize =
-  if gossip::MAX_LIBP2P_GOSSIP_MESSAGE_SIZE > reqres::MAX_LIBP2P_REQRES_MESSAGE_SIZE {
-    gossip::MAX_LIBP2P_GOSSIP_MESSAGE_SIZE
-  } else {
-    reqres::MAX_LIBP2P_REQRES_MESSAGE_SIZE
-  };
 
 fn peer_id_from_public(public: PublicKey) -> PeerId {
   // 0 represents the identity Multihash, that no hash was performed
@@ -143,9 +135,9 @@ struct Libp2pInner {
   signed_cosigns: Mutex<mpsc::UnboundedReceiver<SignedCosign>>,
   signed_cosigns_send: mpsc::UnboundedSender<SignedCosign>,
 
-  heartbeat_requests: Mutex<mpsc::UnboundedReceiver<(RequestId, ValidatorSet, [u8; 32])>>,
-  notable_cosign_requests: Mutex<mpsc::UnboundedReceiver<(RequestId, [u8; 32])>>,
-  inbound_request_responses: mpsc::UnboundedSender<(RequestId, Response)>,
+  heartbeat_requests: Mutex<mpsc::UnboundedReceiver<(InboundRequestId, ValidatorSet, [u8; 32])>>,
+  notable_cosign_requests: Mutex<mpsc::UnboundedReceiver<(InboundRequestId, [u8; 32])>>,
+  inbound_request_responses: mpsc::UnboundedSender<(InboundRequestId, Response)>,
 }
 
 /// The libp2p-backed P2P implementation.
@@ -176,19 +168,9 @@ impl Libp2p {
         Ok(OnlyValidators { serai_key: serai_key.clone(), noise_keypair: noise_keypair.clone() })
       };
 
-      let new_yamux = || {
-        let mut config = yamux::Config::default();
-        // 1 MiB default + max message size
-        config.set_max_buffer_size((1024 * 1024) + MAX_LIBP2P_MESSAGE_SIZE);
-        // 256 KiB default + max message size
-        config
-          .set_receive_window_size(((256 * 1024) + MAX_LIBP2P_MESSAGE_SIZE).try_into().unwrap());
-        config
-      };
-
       let mut swarm = SwarmBuilder::with_existing_identity(identity::Keypair::generate_ed25519())
         .with_tokio()
-        .with_tcp(TcpConfig::default().nodelay(true), new_only_validators, new_yamux)
+        .with_tcp(TcpConfig::default().nodelay(true), new_only_validators, yamux::Config::default)
         .unwrap()
         .with_behaviour(|_| Behavior {
           allow_list: allow_block_list::Behaviour::default(),

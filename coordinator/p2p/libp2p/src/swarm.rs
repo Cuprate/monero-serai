@@ -17,7 +17,7 @@ use serai_cosign::SignedCosign;
 use futures_util::StreamExt;
 use libp2p::{
   identity::PeerId,
-  request_response::{RequestId, ResponseChannel},
+  request_response::{InboundRequestId, OutboundRequestId, ResponseChannel},
   swarm::{dial_opts::DialOpts, SwarmEvent, Swarm},
 };
 
@@ -65,12 +65,12 @@ pub(crate) struct SwarmTask {
   tributary_gossip: mpsc::UnboundedSender<([u8; 32], Vec<u8>)>,
 
   outbound_requests: mpsc::UnboundedReceiver<(PeerId, Request, oneshot::Sender<Response>)>,
-  outbound_request_responses: HashMap<RequestId, oneshot::Sender<Response>>,
+  outbound_request_responses: HashMap<OutboundRequestId, oneshot::Sender<Response>>,
 
-  inbound_request_response_channels: HashMap<RequestId, ResponseChannel<Response>>,
-  heartbeat_requests: mpsc::UnboundedSender<(RequestId, ValidatorSet, [u8; 32])>,
-  notable_cosign_requests: mpsc::UnboundedSender<(RequestId, [u8; 32])>,
-  inbound_request_responses: mpsc::UnboundedReceiver<(RequestId, Response)>,
+  inbound_request_response_channels: HashMap<InboundRequestId, ResponseChannel<Response>>,
+  heartbeat_requests: mpsc::UnboundedSender<(InboundRequestId, ValidatorSet, [u8; 32])>,
+  notable_cosign_requests: mpsc::UnboundedSender<(InboundRequestId, [u8; 32])>,
+  inbound_request_responses: mpsc::UnboundedReceiver<(InboundRequestId, Response)>,
 }
 
 impl SwarmTask {
@@ -222,24 +222,20 @@ impl SwarmTask {
               }
             }
 
-            SwarmEvent::Behaviour(
-              BehaviorEvent::AllowList(event) | BehaviorEvent::ConnectionLimits(event)
-            ) => {
-              // This *is* an exhaustive match as these events are empty enums
-              match event {}
-            }
-            SwarmEvent::Behaviour(
-              BehaviorEvent::Ping(ping::Event { peer: _, connection, result, })
-            ) => {
-              if result.is_err() {
-                self.swarm.close_connection(connection);
+            SwarmEvent::Behaviour(event) => {
+              match event {
+                BehaviorEvent::AllowList(event) | BehaviorEvent::ConnectionLimits(event) => {
+                  // This *is* an exhaustive match as these events are empty enums
+                  match event {}
+                }
+                BehaviorEvent::Ping(ping::Event { peer: _, connection, result, }) => {
+                  if result.is_err() {
+                    self.swarm.close_connection(connection);
+                  }
+                }
+                BehaviorEvent::Reqres(event) => self.handle_reqres(event),
+                BehaviorEvent::Gossip(event) => self.handle_gossip(event),
               }
-            }
-            SwarmEvent::Behaviour(BehaviorEvent::Reqres(event)) => {
-              self.handle_reqres(event)
-            }
-            SwarmEvent::Behaviour(BehaviorEvent::Gossip(event)) => {
-              self.handle_gossip(event)
             }
 
             // We don't handle any of these
@@ -250,7 +246,14 @@ impl SwarmTask {
             SwarmEvent::ExpiredListenAddr { .. } |
             SwarmEvent::ListenerClosed { .. } |
             SwarmEvent::ListenerError { .. } |
-            SwarmEvent::Dialing { .. } => {}
+            SwarmEvent::Dialing { .. } |
+            SwarmEvent::NewExternalAddrCandidate { .. } |
+            SwarmEvent::ExternalAddrConfirmed { .. } |
+            SwarmEvent::ExternalAddrExpired { .. } |
+            SwarmEvent::NewExternalAddrOfPeer { .. } => {}
+
+            // Requires as SwarmEvent is non-exhaustive
+            _ => log::warn!("unhandled SwarmEvent: {event:?}"),
           }
         }
 
@@ -321,9 +324,9 @@ impl SwarmTask {
 
     outbound_requests: mpsc::UnboundedReceiver<(PeerId, Request, oneshot::Sender<Response>)>,
 
-    heartbeat_requests: mpsc::UnboundedSender<(RequestId, ValidatorSet, [u8; 32])>,
-    notable_cosign_requests: mpsc::UnboundedSender<(RequestId, [u8; 32])>,
-    inbound_request_responses: mpsc::UnboundedReceiver<(RequestId, Response)>,
+    heartbeat_requests: mpsc::UnboundedSender<(InboundRequestId, ValidatorSet, [u8; 32])>,
+    notable_cosign_requests: mpsc::UnboundedSender<(InboundRequestId, [u8; 32])>,
+    inbound_request_responses: mpsc::UnboundedReceiver<(InboundRequestId, Response)>,
   ) {
     tokio::spawn(
       SwarmTask {

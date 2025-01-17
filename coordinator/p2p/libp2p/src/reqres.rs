@@ -10,7 +10,7 @@ use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use libp2p::request_response::{
   self, Codec as CodecTrait, Event as GenericEvent, Config, Behaviour, ProtocolSupport,
 };
-pub use request_response::{RequestId, Message};
+pub use request_response::{InboundRequestId, Message};
 
 use serai_cosign::SignedCosign;
 
@@ -129,7 +129,6 @@ pub(crate) type Event = GenericEvent<Request, Response>;
 
 pub(crate) type Behavior = Behaviour<Codec>;
 pub(crate) fn new_behavior() -> Behavior {
-  let mut config = Config::default();
-  config.set_request_timeout(Duration::from_secs(5));
+  let config = Config::default().with_request_timeout(Duration::from_secs(5));
   Behavior::new([(PROTOCOL, ProtocolSupport::Full)], config)
 }

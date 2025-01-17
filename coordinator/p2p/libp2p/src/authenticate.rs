@@ -11,8 +11,7 @@ use serai_client::primitives::PublicKey as Public;
 
 use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use libp2p::{
-  core::UpgradeInfo,
-  InboundUpgrade, OutboundUpgrade,
+  core::upgrade::{UpgradeInfo, InboundConnectionUpgrade, OutboundConnectionUpgrade},
   identity::{self, PeerId},
   noise,
 };
@@ -119,12 +118,18 @@ impl UpgradeInfo for OnlyValidators {
   }
 }
 
-impl<S: 'static + Send + Unpin + AsyncRead + AsyncWrite> InboundUpgrade<S> for OnlyValidators {
+impl<S: 'static + Send + Unpin + AsyncRead + AsyncWrite> InboundConnectionUpgrade<S>
+  for OnlyValidators
+{
   type Output = (PeerId, noise::Output<S>);
   type Error = io::Error;
   type Future = Pin<Box<dyn Send + Future<Output = Result<Self::Output, Self::Error>>>>;
 
-  fn upgrade_inbound(self, socket: S, info: Self::Info) -> Self::Future {
+  fn upgrade_inbound(
+    self,
+    socket: S,
+    info: <Self as UpgradeInfo>::Info,
+  ) -> <Self as InboundConnectionUpgrade<S>>::Future {
     Box::pin(async move {
       let (dialer_noise_peer_id, mut socket) = noise::Config::new(&self.noise_keypair)
         .unwrap()
@@ -147,12 +152,18 @@ impl<S: 'static + Send + Unpin + AsyncRead + AsyncWrite> InboundUpgrade<S> for O
   }
 }
 
-impl<S: 'static + Send + Unpin + AsyncRead + AsyncWrite> OutboundUpgrade<S> for OnlyValidators {
+impl<S: 'static + Send + Unpin + AsyncRead + AsyncWrite> OutboundConnectionUpgrade<S>
+  for OnlyValidators
+{
   type Output = (PeerId, noise::Output<S>);
   type Error = io::Error;
   type Future = Pin<Box<dyn Send + Future<Output = Result<Self::Output, Self::Error>>>>;
 
-  fn upgrade_outbound(self, socket: S, info: Self::Info) -> Self::Future {
+  fn upgrade_outbound(
+    self,
+    socket: S,
+    info: <Self as UpgradeInfo>::Info,
+  ) -> <Self as OutboundConnectionUpgrade<S>>::Future {
     Box::pin(async move {
       let (listener_noise_peer_id, mut socket) = noise::Config::new(&self.noise_keypair)
         .unwrap()
