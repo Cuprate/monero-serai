@@ -4,29 +4,30 @@ pragma solidity ^0.8.26;
 /*
   The expected deployment process of Serai's Router is as follows:
 
-  1) A transaction deploying Deployer is made. Then, a deterministic signature is
-     created such that an account with an unknown private key is the creator of
-     the contract. Anyone can fund this address, and once anyone does, the
+  1) A transaction deploying Deployer is made. Then, a deterministic signature
+     is created such that an account with an unknown private key is the creator
+     of the contract. Anyone can fund this address, and once anyone does, the
      transaction deploying Deployer can be published by anyone. No other
      transaction may be made from that account.
 
-  2) Anyone deploys the Router through the Deployer. This uses a sequential nonce
-     such that meet-in-the-middle attacks, with complexity 2**80, aren't feasible.
-     While such attacks would still be feasible if the Deployer's address was
-     controllable, the usage of a deterministic signature with a NUMS method
-     prevents that.
+  2) Anyone deploys the Router through the Deployer. This uses a sequential
+     nonce such that meet-in-the-middle attacks, with complexity 2**80, aren't
+     feasible. While such attacks would still be feasible if the Deployer's
+     address was controllable, the usage of a deterministic signature with a
+     NUMS method prevents that.
 
-  This doesn't have any denial-of-service risks and will resolve once anyone steps
-  forward as deployer. This does fail to guarantee an identical address across
-  every chain, though it enables letting anyone efficiently ask the Deployer for
-  the address (with the Deployer having an identical address on every chain).
+  This doesn't have any denial-of-service risks and will resolve once anyone
+  steps forward as deployer. This does fail to guarantee an identical address
+  for the Router across every chain, though it enables anyone to efficiently
+  ask the Deployer for the address (with the Deployer having an identical
+  address on every chain).
 
-  Unfortunately, guaranteeing identical addresses aren't feasible. We'd need the
-  Deployer contract to use a consistent salt for the Router, yet the Router must
-  be deployed with a specific public key for Serai. Since Ethereum isn't able to
-  determine a valid public key (one the result of a Serai DKG) from a dishonest
-  public key, we have to allow multiple deployments with Serai being the one to
-  determine which to use.
+  Unfortunately, guaranteeing identical addresses for the Router isn't
+  feasible. We'd need the Deployer contract to use a consistent salt for the
+  Router, yet the Router must be deployed with a specific public key for Serai.
+  Since Ethereum isn't able to determine a valid public key (one the result of
+  a Serai DKG) from a dishonest public key (one arbitrary), we have to allow
+  multiple deployments with Serai being the one to determine which to use.
 
   The alternative would be to have a council publish the Serai key on-Ethereum,
   with Serai verifying the published result. This would introduce a DoS risk in
@@ -68,15 +69,18 @@ contract Deployer {
     /*
       Check this wasn't prior deployed.
 
-      This is a post-check, not a pre-check (in violation of the CEI pattern). If we used a
-      pre-check, a deployed contract could re-enter the Deployer to deploy the same contract
-      multiple times due to the inner call updating state and then the outer call overwriting it.
-      The post-check causes the outer call to error once the inner call updates state.
+      This is a post-check, not a pre-check (in violation of the CEI pattern).
+      If we used a pre-check, a deployed contract could re-enter the Deployer
+      to deploy the same contract multiple times due to the inner call updating
+      state and then the outer call overwriting it. The post-check causes the
+      outer call to error once the inner call updates state.
 
-      This does mean contract deployment may fail if deployment causes arbitrary execution which
-      maliciously nests deployment of the being-deployed contract. Such an inner call won't fail,
-      yet the outer call would. The usage of a re-entrancy guard would call the inner call to fail
-      while the outer call succeeds. This is considered so edge-case it isn't worth handling.
+      This does mean contract deployment may fail if deployment causes
+      arbitrary execution which maliciously nests deployment of the
+      being-deployed contract. Such an inner call won't fail, yet the outer
+      call would. The usage of a re-entrancy guard would cause the inner call
+      to fail while the outer call succeeds. This is considered so edge-case it
+      isn't worth handling.
     */
     if (deployments[initCodeHash] != address(0)) {
       revert PriorDeployed();
