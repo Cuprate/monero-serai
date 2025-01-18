@@ -92,7 +92,7 @@ impl Neg for FieldElement {
   }
 }
 
-impl<'a> Neg for &'a FieldElement {
+impl Neg for &FieldElement {
   type Output = FieldElement;
   fn neg(self) -> Self::Output {
     (*self).neg()

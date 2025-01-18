@@ -33,7 +33,7 @@ pub struct ArithmeticCircuitStatement<'a, C: Ciphersuite> {
   V: PointVector<C>,
 }
 
-impl<'a, C: Ciphersuite> Zeroize for ArithmeticCircuitStatement<'a, C> {
+impl<C: Ciphersuite> Zeroize for ArithmeticCircuitStatement<'_, C> {
   fn zeroize(&mut self) {
     self.constraints.zeroize();
     self.C.zeroize();

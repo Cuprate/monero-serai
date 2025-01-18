@@ -18,7 +18,7 @@ pub type ValidatorSetsEvent = serai_abi::validator_sets::Event;
 
 #[derive(Clone, Copy)]
 pub struct SeraiValidatorSets<'a>(pub(crate) &'a TemporalSerai<'a>);
-impl<'a> SeraiValidatorSets<'a> {
+impl SeraiValidatorSets<'_> {
   pub async fn new_set_events(&self) -> Result<Vec<ValidatorSetsEvent>, SeraiError> {
     self
       .0

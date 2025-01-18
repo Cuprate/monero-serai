@@ -80,7 +80,7 @@ pub struct TemporalSerai<'a> {
   block: [u8; 32],
   events: RwLock<Option<EventsInBlock>>,
 }
-impl<'a> Clone for TemporalSerai<'a> {
+impl Clone for TemporalSerai<'_> {
   fn clone(&self) -> Self {
     Self { serai: self.serai, block: self.block, events: RwLock::new(None) }
   }
@@ -319,7 +319,7 @@ impl Serai {
   }
 }
 
-impl<'a> TemporalSerai<'a> {
+impl TemporalSerai<'_> {
   async fn events<E>(
     &self,
     filter_map: impl Fn(&Event) -> Option<E>,
@@ -389,27 +389,27 @@ impl<'a> TemporalSerai<'a> {
     })
   }
 
-  pub fn coins(&'a self) -> SeraiCoins<'a> {
+  pub fn coins(&self) -> SeraiCoins<'_> {
     SeraiCoins(self)
   }
 
-  pub fn dex(&'a self) -> SeraiDex<'a> {
+  pub fn dex(&self) -> SeraiDex<'_> {
     SeraiDex(self)
   }
 
-  pub fn in_instructions(&'a self) -> SeraiInInstructions<'a> {
+  pub fn in_instructions(&self) -> SeraiInInstructions<'_> {
     SeraiInInstructions(self)
   }
 
-  pub fn validator_sets(&'a self) -> SeraiValidatorSets<'a> {
+  pub fn validator_sets(&self) -> SeraiValidatorSets<'_> {
     SeraiValidatorSets(self)
   }
 
-  pub fn genesis_liquidity(&'a self) -> SeraiGenesisLiquidity {
+  pub fn genesis_liquidity(&self) -> SeraiGenesisLiquidity {
     SeraiGenesisLiquidity(self)
   }
 
-  pub fn liquidity_tokens(&'a self) -> SeraiLiquidityTokens {
+  pub fn liquidity_tokens(&self) -> SeraiLiquidityTokens {
     SeraiLiquidityTokens(self)
   }
 }

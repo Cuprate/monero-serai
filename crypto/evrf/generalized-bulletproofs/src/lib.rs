@@ -247,7 +247,7 @@ impl<C: Ciphersuite> Generators<C> {
   }
 }
 
-impl<'a, C: Ciphersuite> ProofGenerators<'a, C> {
+impl<C: Ciphersuite> ProofGenerators<'_, C> {
   pub(crate) fn len(&self) -> usize {
     self.g_bold.len()
   }

@@ -133,7 +133,7 @@ struct ScanBlock<'a, TD: Db, TDT: DbTxn, P: P2p> {
   total_weight: u16,
   validator_weights: &'a HashMap<SeraiAddress, u16>,
 }
-impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
+impl<TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'_, TD, TDT, P> {
   fn potentially_start_cosign(&mut self) {
     // Don't start a new cosigning instance if we're actively running one
     if TributaryDb::actively_cosigning(self.tributary_txn, self.set.set).is_some() {
@@ -173,7 +173,7 @@ impl<'a, TD: Db, TDT: DbTxn, P: P2p> ScanBlock<'a, TD, TDT, P> {
       self.set.set,
       messages::coordinator::CoordinatorMessage::CosignSubstrateBlock {
         session: self.set.set.session,
-        intent,
+        cosign: intent.into_cosign(self.set.set.network),
       },
     );
   }
