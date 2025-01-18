@@ -43,10 +43,13 @@ impl Deployer {
     let bytecode =
       Bytes::from_hex(BYTECODE).expect("compiled-in Deployer bytecode wasn't valid hex");
 
+    // Legacy transactions are used to ensure the widest possible degree of support across EVMs
     let tx = TxLegacy {
       chain_id: None,
       nonce: 0,
-      // 100 gwei
+      // This uses a fixed gas price as necessary to achieve a deterministic address
+      // The gas price is fixed to 100 gwei, which should be incredibly generous, in order to make
+      // this getting stuck unlikely. While expensive, this only has to occur once
       gas_price: 100_000_000_000u128,
       // TODO: Use a more accurate gas limit
       gas_limit: 1_000_000u64,
@@ -55,7 +58,7 @@ impl Deployer {
       input: bytecode,
     };
 
-    ethereum_primitives::deterministically_sign(&tx)
+    ethereum_primitives::deterministically_sign(tx)
   }
 
   /// Obtain the deterministic address for this contract.

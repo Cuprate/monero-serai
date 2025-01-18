@@ -76,7 +76,7 @@ pub async fn deploy_contract(
     input: bin.into(),
   };
 
-  let deployment_tx = deterministically_sign(&deployment_tx);
+  let deployment_tx = deterministically_sign(deployment_tx);
 
   let receipt = publish_tx(provider, deployment_tx).await;
   assert!(receipt.status());

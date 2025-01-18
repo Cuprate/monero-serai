@@ -109,7 +109,7 @@ pub async fn deploy_contract(
     input: bin,
   };
 
-  let deployment_tx = deterministically_sign(&deployment_tx);
+  let deployment_tx = deterministically_sign(deployment_tx);
 
   // Fund the deployer address
   fund_account(

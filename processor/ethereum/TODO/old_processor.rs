@@ -26,7 +26,7 @@ TODO
       };
       tx.gas_limit = 1_000_000u64.into();
       tx.gas_price = 1_000_000_000u64.into();
-      let tx = ethereum_serai::crypto::deterministically_sign(&tx);
+      let tx = ethereum_serai::crypto::deterministically_sign(tx);
 
       if self.provider.get_transaction_by_hash(*tx.hash()).await.unwrap().is_none() {
         self

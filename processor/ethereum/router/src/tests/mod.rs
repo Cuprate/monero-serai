@@ -84,7 +84,7 @@ async fn setup_test(
   // Set a gas price (100 gwei)
   tx.gas_price = 100_000_000_000;
   // Sign it
-  let tx = ethereum_primitives::deterministically_sign(&tx);
+  let tx = ethereum_primitives::deterministically_sign(tx);
   // Publish it
   let receipt = ethereum_test_primitives::publish_tx(&provider, tx).await;
   assert!(receipt.status());
@@ -123,7 +123,7 @@ async fn confirm_next_serai_key(
 
   let mut tx = router.confirm_next_serai_key(&sig);
   tx.gas_price = 100_000_000_000;
-  let tx = ethereum_primitives::deterministically_sign(&tx);
+  let tx = ethereum_primitives::deterministically_sign(tx);
   let receipt = ethereum_test_primitives::publish_tx(provider, tx).await;
   assert!(receipt.status());
   assert_eq!(
@@ -164,7 +164,7 @@ async fn test_update_serai_key() {
 
   let mut tx = router.update_serai_key(&update_to, &sig);
   tx.gas_price = 100_000_000_000;
-  let tx = ethereum_primitives::deterministically_sign(&tx);
+  let tx = ethereum_primitives::deterministically_sign(tx);
   let receipt = ethereum_test_primitives::publish_tx(&provider, tx).await;
   assert!(receipt.status());
   assert_eq!(u128::from(Router::UPDATE_SERAI_KEY_GAS), ((receipt.gas_used + 1000) / 1000) * 1000);
@@ -199,7 +199,7 @@ async fn test_eth_in_instruction() {
     .abi_encode()
     .into(),
   };
-  let tx = ethereum_primitives::deterministically_sign(&tx);
+  let tx = ethereum_primitives::deterministically_sign(tx);
   let signer = tx.recover_signer().unwrap();
 
   let receipt = ethereum_test_primitives::publish_tx(&provider, tx).await;
@@ -250,7 +250,7 @@ async fn publish_outs(
 
   let mut tx = router.execute(coin, fee, outs, &sig);
   tx.gas_price = 100_000_000_000;
-  let tx = ethereum_primitives::deterministically_sign(&tx);
+  let tx = ethereum_primitives::deterministically_sign(tx);
   ethereum_test_primitives::publish_tx(provider, tx).await
 }
 
@@ -307,7 +307,7 @@ async fn escape_hatch(
 
   let mut tx = router.escape_hatch(escape_to, &sig);
   tx.gas_price = 100_000_000_000;
-  let tx = ethereum_primitives::deterministically_sign(&tx);
+  let tx = ethereum_primitives::deterministically_sign(tx);
   let receipt = ethereum_test_primitives::publish_tx(provider, tx).await;
   assert!(receipt.status());
   assert_eq!(u128::from(Router::ESCAPE_HATCH_GAS), ((receipt.gas_used + 1000) / 1000) * 1000);
@@ -321,7 +321,7 @@ async fn escape(
 ) -> TransactionReceipt {
   let mut tx = router.escape(coin.address());
   tx.gas_price = 100_000_000_000;
-  let tx = ethereum_primitives::deterministically_sign(&tx);
+  let tx = ethereum_primitives::deterministically_sign(tx);
   let receipt = ethereum_test_primitives::publish_tx(provider, tx).await;
   assert!(receipt.status());
   receipt
