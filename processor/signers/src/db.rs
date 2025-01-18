@@ -1,6 +1,8 @@
-use serai_validator_sets_primitives::{Session, Slash};
+use serai_validator_sets_primitives::{Session, SlashReport as SlashReportStruct};
 
 use serai_db::{Get, DbTxn, create_db, db_channel};
+
+use serai_cosign::{Cosign as CosignStruct, SignedCosign};
 
 use messages::sign::{ProcessorMessage, CoordinatorMessage};
 
@@ -11,16 +13,16 @@ create_db! {
     LatestRetiredSession: () -> Session,
     ToCleanup: () -> Vec<(Session, Vec<u8>)>,
 
-    ToCosign: (session: Session) -> (u64, [u8; 32]),
+    ToCosign: (session: Session) -> CosignStruct,
   }
 }
 
 db_channel! {
   SignersGlobal {
-    Cosign: (session: Session) -> ((u64, [u8; 32]), Vec<u8>),
+    Cosign: (session: Session) -> SignedCosign,
 
-    SlashReport: (session: Session) -> Vec<Slash>,
-    SlashReportSignature: (session: Session) -> Vec<u8>,
+    SlashReport: (session: Session) -> SlashReportStruct,
+    SignedSlashReport: (session: Session) -> (SlashReportStruct, [u8; 64]),
 
     /*
       TODO: Most of these are pointless? We drop all active signing sessions on reboot. It's

@@ -365,10 +365,12 @@ impl Transaction {
         Transaction::DkgConfirmationPreprocess { ref mut signed, .. } => signed,
         Transaction::DkgConfirmationShare { ref mut signed, .. } => signed,
 
-        Transaction::Cosign { .. } => panic!("signing CosignSubstrateBlock"),
-        Transaction::Cosigned { .. } => panic!("signing Cosigned"),
-        Transaction::SubstrateBlock { .. } => panic!("signing SubstrateBlock"),
-        Transaction::Batch { .. } => panic!("signing Batch"),
+        Transaction::Cosign { .. } => panic!("signing Cosign transaction (provided)"),
+        Transaction::Cosigned { .. } => panic!("signing Cosigned transaction (provided)"),
+        Transaction::SubstrateBlock { .. } => {
+          panic!("signing SubstrateBlock transaction (provided)")
+        }
+        Transaction::Batch { .. } => panic!("signing Batch transaction (provided)"),
 
         Transaction::Sign { ref mut signed, .. } => signed,
 

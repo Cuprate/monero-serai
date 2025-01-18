@@ -69,7 +69,12 @@ impl<D: Db, E: GroupEncoding> BatchSignerTask<D, E> {
 
       let mut machines = Vec::with_capacity(keys.len());
       for keys in &keys {
-        machines.push(WrappedSchnorrkelMachine::new(keys.clone(), batch_message(&batch)));
+        // TODO: Fetch the context for this from a constant instead of re-defining it
+        machines.push(WrappedSchnorrkelMachine::new(
+          keys.clone(),
+          b"substrate",
+          batch_message(&batch),
+        ));
       }
       attempt_manager.register(VariantSignId::Batch(id), machines);
     }
@@ -106,7 +111,12 @@ impl<D: Db, E: Send + GroupEncoding> ContinuallyRan for BatchSignerTask<D, E> {
 
         let mut machines = Vec::with_capacity(self.keys.len());
         for keys in &self.keys {
-          machines.push(WrappedSchnorrkelMachine::new(keys.clone(), batch_message(&batch)));
+          // TODO: Also fetch the constant here
+          machines.push(WrappedSchnorrkelMachine::new(
+            keys.clone(),
+            b"substrate",
+            batch_message(&batch),
+          ));
         }
         for msg in self.attempt_manager.register(VariantSignId::Batch(batch_hash), machines) {
           BatchSignerToCoordinatorMessages::send(&mut txn, self.session, &msg);

@@ -3,11 +3,13 @@ use std::sync::{LazyLock, Arc, Mutex};
 
 use tokio::sync::mpsc;
 
-use scale::Encode;
 use serai_client::{
-  primitives::Signature, validator_sets::primitives::Session,
+  primitives::Signature,
+  validator_sets::primitives::{Session, SlashReport},
   in_instructions::primitives::SignedBatch,
 };
+
+use serai_cosign::SignedCosign;
 
 use serai_db::{Get, DbTxn, Db, create_db, db_channel};
 
@@ -181,17 +183,11 @@ impl signers::Coordinator for CoordinatorSend {
 
   fn publish_cosign(
     &mut self,
-    block_number: u64,
-    block: [u8; 32],
-    signature: Signature,
+    cosign: SignedCosign,
   ) -> impl Send + Future<Output = Result<(), Self::EphemeralError>> {
     async move {
       self.send(&messages::ProcessorMessage::Coordinator(
-        messages::coordinator::ProcessorMessage::CosignedBlock {
-          block_number,
-          block,
-          signature: signature.encode(),
-        },
+        messages::coordinator::ProcessorMessage::CosignedBlock { cosign },
       ));
       Ok(())
     }
@@ -212,13 +208,15 @@ impl signers::Coordinator for CoordinatorSend {
   fn publish_slash_report_signature(
     &mut self,
     session: Session,
+    slash_report: SlashReport,
     signature: Signature,
   ) -> impl Send + Future<Output = Result<(), Self::EphemeralError>> {
     async move {
       self.send(&messages::ProcessorMessage::Coordinator(
         messages::coordinator::ProcessorMessage::SignedSlashReport {
           session,
-          signature: signature.encode(),
+          slash_report,
+          signature: signature.0,
         },
       ));
       Ok(())

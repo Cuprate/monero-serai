@@ -3,11 +3,8 @@ use core::{marker::PhantomData, future::Future};
 use ciphersuite::Ristretto;
 use frost::dkg::ThresholdKeys;
 
-use scale::Encode;
 use serai_primitives::Signature;
-use serai_validator_sets_primitives::{
-  Session, ValidatorSet, SlashReport as SlashReportStruct, report_slashes_message,
-};
+use serai_validator_sets_primitives::Session;
 
 use serai_db::{DbTxn, Db};
 
@@ -20,7 +17,7 @@ use frost_attempt_manager::*;
 
 use crate::{
   db::{
-    SlashReport, SlashReportSignature, CoordinatorToSlashReportSignerMessages,
+    SlashReport, SignedSlashReport, CoordinatorToSlashReportSignerMessages,
     SlashReportSignerToCoordinatorMessages,
   },
   WrappedSchnorrkelMachine,
@@ -72,12 +69,14 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SlashReportSignerTask<D, S> {
 
         let mut machines = Vec::with_capacity(self.keys.len());
         {
-          let message = report_slashes_message(
-            &ValidatorSet { network: S::NETWORK, session: self.session },
-            &SlashReportStruct(slash_report.try_into().unwrap()),
-          );
+          let message = slash_report.report_slashes_message();
           for keys in &self.keys {
-            machines.push(WrappedSchnorrkelMachine::new(keys.clone(), message.clone()));
+            // TODO: Fetch this constant from somewhere instead of inlining it
+            machines.push(WrappedSchnorrkelMachine::new(
+              keys.clone(),
+              b"substrate",
+              message.clone(),
+            ));
           }
         }
         let mut txn = self.db.txn();
@@ -105,12 +104,12 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for SlashReportSignerTask<D, S> {
           Response::Signature { id, signature } => {
             assert_eq!(id, VariantSignId::SlashReport);
             // Drain the channel
-            SlashReport::try_recv(&mut txn, self.session).unwrap();
+            let slash_report = SlashReport::try_recv(&mut txn, self.session).unwrap();
             // Send the signature
-            SlashReportSignature::send(
+            SignedSlashReport::send(
               &mut txn,
               self.session,
-              &Signature::from(signature).encode(),
+              &(slash_report, Signature::from(signature).0),
             );
           }
         }

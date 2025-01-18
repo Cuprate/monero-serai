@@ -16,10 +16,10 @@ use frost_schnorrkel::Schnorrkel;
 
 // This wraps a Schnorrkel sign machine into one with a preset message.
 #[derive(Clone)]
-pub(crate) struct WrappedSchnorrkelMachine(ThresholdKeys<Ristretto>, Vec<u8>);
+pub(crate) struct WrappedSchnorrkelMachine(ThresholdKeys<Ristretto>, &'static [u8], Vec<u8>);
 impl WrappedSchnorrkelMachine {
-  pub(crate) fn new(keys: ThresholdKeys<Ristretto>, msg: Vec<u8>) -> Self {
-    Self(keys, msg)
+  pub(crate) fn new(keys: ThresholdKeys<Ristretto>, context: &'static [u8], msg: Vec<u8>) -> Self {
+    Self(keys, context, msg)
   }
 }
 
@@ -39,10 +39,10 @@ impl PreprocessMachine for WrappedSchnorrkelMachine {
     rng: &mut R,
   ) -> (Self::SignMachine, Preprocess<Ristretto, <Schnorrkel as Algorithm<Ristretto>>::Addendum>)
   {
-    let WrappedSchnorrkelMachine(keys, batch) = self;
+    let WrappedSchnorrkelMachine(keys, context, msg) = self;
     let (machine, preprocess) =
-      AlgorithmMachine::new(Schnorrkel::new(b"substrate"), keys).preprocess(rng);
-    (WrappedSchnorrkelSignMachine(machine, batch), preprocess)
+      AlgorithmMachine::new(Schnorrkel::new(context), keys).preprocess(rng);
+    (WrappedSchnorrkelSignMachine(machine, msg), preprocess)
   }
 }
 

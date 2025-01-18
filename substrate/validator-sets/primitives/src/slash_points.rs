@@ -234,9 +234,12 @@ impl TryFrom<Vec<Slash>> for SlashReport {
   }
 }
 
-// This is assumed binding to the ValidatorSet via the key signed with
-pub fn report_slashes_message(slashes: &SlashReport) -> Vec<u8> {
-  (b"ValidatorSets-report_slashes", slashes).encode()
+impl SlashReport {
+  /// The message to sign when publishing this SlashReport.
+  // This is assumed binding to the ValidatorSet via the key signed with
+  pub fn report_slashes_message(&self) -> Vec<u8> {
+    (b"ValidatorSets-report_slashes", &self.0).encode()
+  }
 }
 
 #[test]

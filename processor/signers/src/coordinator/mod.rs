@@ -1,6 +1,7 @@
 use core::future::Future;
 
-use scale::Decode;
+use serai_primitives::Signature;
+
 use serai_db::{DbTxn, Db};
 
 use primitives::task::ContinuallyRan;
@@ -99,17 +100,11 @@ impl<D: Db, C: Coordinator> ContinuallyRan for CoordinatorTask<D, C> {
         // Publish the cosigns from this session
         {
           let mut txn = self.db.txn();
-          while let Some(((block_number, block_id), signature)) =
-            Cosign::try_recv(&mut txn, session)
-          {
+          while let Some(signed_cosign) = Cosign::try_recv(&mut txn, session) {
             iterated = true;
             self
               .coordinator
-              .publish_cosign(
-                block_number,
-                block_id,
-                <_>::decode(&mut signature.as_slice()).unwrap(),
-              )
+              .publish_cosign(signed_cosign)
               .await
               .map_err(|e| format!("couldn't publish Cosign: {e:?}"))?;
           }
@@ -119,15 +114,12 @@ impl<D: Db, C: Coordinator> ContinuallyRan for CoordinatorTask<D, C> {
         // If this session signed its slash report, publish its signature
         {
           let mut txn = self.db.txn();
-          if let Some(slash_report_signature) = SlashReportSignature::try_recv(&mut txn, session) {
+          if let Some((slash_report, signature)) = SignedSlashReport::try_recv(&mut txn, session) {
             iterated = true;
 
             self
               .coordinator
-              .publish_slash_report_signature(
-                session,
-                <_>::decode(&mut slash_report_signature.as_slice()).unwrap(),
-              )
+              .publish_slash_report_signature(session, slash_report, Signature(signature))
               .await
               .map_err(|e| {
                 format!("couldn't send slash report signature to the coordinator: {e:?}")

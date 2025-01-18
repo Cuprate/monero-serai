@@ -221,20 +221,16 @@ pub async fn main_loop<
         signers.queue_message(txn, &msg)
       }
       messages::CoordinatorMessage::Coordinator(
-        messages::coordinator::CoordinatorMessage::CosignSubstrateBlock {
-          session,
-          block_number,
-          block,
-        },
+        messages::coordinator::CoordinatorMessage::CosignSubstrateBlock { session, cosign },
       ) => {
         let txn = txn.take().unwrap();
-        signers.cosign_block(txn, session, block_number, block)
+        signers.cosign_block(txn, session, &cosign)
       }
       messages::CoordinatorMessage::Coordinator(
-        messages::coordinator::CoordinatorMessage::SignSlashReport { session, report },
+        messages::coordinator::CoordinatorMessage::SignSlashReport { session, slash_report },
       ) => {
         let txn = txn.take().unwrap();
-        signers.sign_slash_report(txn, session, &report)
+        signers.sign_slash_report(txn, session, &slash_report)
       }
 
       messages::CoordinatorMessage::Substrate(msg) => match msg {

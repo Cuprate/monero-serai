@@ -28,6 +28,7 @@ ciphersuite = { path = "../../crypto/ciphersuite", default-features = false, fea
 dkg = { path = "../../crypto/dkg", default-features = false, features = ["std", "evrf-ristretto"] }
 
 serai-client = { path = "../../substrate/client", default-features = false }
+serai-cosign = { path = "../../coordinator/cosign" }
 
 log = { version = "0.4", default-features = false, features = ["std"] }
 env_logger = { version = "0.10", default-features = false, features = ["humantime"] }

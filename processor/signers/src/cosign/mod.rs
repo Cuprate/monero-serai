@@ -9,7 +9,8 @@ use serai_validator_sets_primitives::Session;
 
 use serai_db::{DbTxn, Db};
 
-use messages::{sign::VariantSignId, coordinator::cosign_block_msg};
+use serai_cosign::{COSIGN_CONTEXT, Cosign as CosignStruct, SignedCosign};
+use messages::sign::VariantSignId;
 
 use primitives::task::{DoesNotError, ContinuallyRan};
 
@@ -34,7 +35,7 @@ pub(crate) struct CosignerTask<D: Db> {
   session: Session,
   keys: Vec<ThresholdKeys<Ristretto>>,
 
-  current_cosign: Option<(u64, [u8; 32])>,
+  current_cosign: Option<CosignStruct>,
   attempt_manager: AttemptManager<D, WrappedSchnorrkelMachine>,
 }
 
@@ -62,26 +63,34 @@ impl<D: Db> ContinuallyRan for CosignerTask<D> {
         let mut txn = self.db.txn();
         if let Some(cosign) = ToCosign::get(&txn, self.session) {
           // If this wasn't already signed for...
-          if LatestCosigned::get(&txn, self.session) < Some(cosign.0) {
+          if LatestCosigned::get(&txn, self.session) < Some(cosign.block_number) {
             // If this isn't the cosign we're currently working on, meaning it's fresh
-            if self.current_cosign != Some(cosign) {
+            if self.current_cosign.as_ref() != Some(&cosign) {
               // Retire the current cosign
-              if let Some(current_cosign) = self.current_cosign {
-                assert!(current_cosign.0 < cosign.0);
-                self.attempt_manager.retire(&mut txn, VariantSignId::Cosign(current_cosign.0));
+              if let Some(current_cosign) = &self.current_cosign {
+                assert!(current_cosign.block_number < cosign.block_number);
+                self
+                  .attempt_manager
+                  .retire(&mut txn, VariantSignId::Cosign(current_cosign.block_number));
               }
 
               // Set the cosign being worked on
-              self.current_cosign = Some(cosign);
+              self.current_cosign = Some(cosign.clone());
 
               let mut machines = Vec::with_capacity(self.keys.len());
               {
-                let message = cosign_block_msg(cosign.0, cosign.1);
+                let message = cosign.signature_message();
                 for keys in &self.keys {
-                  machines.push(WrappedSchnorrkelMachine::new(keys.clone(), message.clone()));
+                  machines.push(WrappedSchnorrkelMachine::new(
+                    keys.clone(),
+                    COSIGN_CONTEXT,
+                    message.clone(),
+                  ));
                 }
               }
-              for msg in self.attempt_manager.register(VariantSignId::Cosign(cosign.0), machines) {
+              for msg in
+                self.attempt_manager.register(VariantSignId::Cosign(cosign.block_number), machines)
+              {
                 CosignerToCoordinatorMessages::send(&mut txn, self.session, &msg);
               }
 
@@ -109,12 +118,19 @@ impl<D: Db> ContinuallyRan for CosignerTask<D> {
             let VariantSignId::Cosign(block_number) = id else {
               panic!("CosignerTask signed a non-Cosign")
             };
-            assert_eq!(Some(block_number), self.current_cosign.map(|cosign| cosign.0));
+            assert_eq!(
+              Some(block_number),
+              self.current_cosign.as_ref().map(|cosign| cosign.block_number)
+            );
 
             let cosign = self.current_cosign.take().unwrap();
-            LatestCosigned::set(&mut txn, self.session, &cosign.0);
+            LatestCosigned::set(&mut txn, self.session, &cosign.block_number);
+            let cosign = SignedCosign {
+              cosign,
+              signature: Signature::from(signature).encode().try_into().unwrap(),
+            };
             // Send the cosign
-            Cosign::send(&mut txn, self.session, &(cosign, Signature::from(signature).encode()));
+            Cosign::send(&mut txn, self.session, &cosign);
           }
         }
 

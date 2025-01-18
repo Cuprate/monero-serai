@@ -11,10 +11,12 @@ use ciphersuite::{group::GroupEncoding, Ciphersuite, Ristretto};
 use frost::dkg::{ThresholdCore, ThresholdKeys};
 
 use serai_primitives::Signature;
-use serai_validator_sets_primitives::{Session, Slash};
+use serai_validator_sets_primitives::{Session, SlashReport};
 use serai_in_instructions_primitives::SignedBatch;
 
 use serai_db::{DbTxn, Db};
+
+use serai_cosign::{Cosign, SignedCosign};
 
 use messages::sign::{VariantSignId, ProcessorMessage, CoordinatorMessage};
 
@@ -59,9 +61,7 @@ pub trait Coordinator: 'static + Send + Sync {
   /// Publish a cosign.
   fn publish_cosign(
     &mut self,
-    block_number: u64,
-    block_id: [u8; 32],
-    signature: Signature,
+    signed_cosign: SignedCosign,
   ) -> impl Send + Future<Output = Result<(), Self::EphemeralError>>;
 
   /// Publish a `SignedBatch`.
@@ -74,6 +74,7 @@ pub trait Coordinator: 'static + Send + Sync {
   fn publish_slash_report_signature(
     &mut self,
     session: Session,
+    slash_report: SlashReport,
     signature: Signature,
   ) -> impl Send + Future<Output = Result<(), Self::EphemeralError>>;
 }
@@ -408,19 +409,13 @@ impl<
   /// Cosign a block.
   ///
   /// This is a cheap call and able to be done inline from a higher-level loop.
-  pub fn cosign_block(
-    &mut self,
-    mut txn: impl DbTxn,
-    session: Session,
-    block_number: u64,
-    block: [u8; 32],
-  ) {
+  pub fn cosign_block(&mut self, mut txn: impl DbTxn, session: Session, cosign: &Cosign) {
     // Don't cosign blocks with already retired keys
     if Some(session.0) <= db::LatestRetiredSession::get(&txn).map(|session| session.0) {
       return;
     }
 
-    db::ToCosign::set(&mut txn, session, &(block_number, block));
+    db::ToCosign::set(&mut txn, session, cosign);
     txn.commit();
 
     if let Some(tasks) = self.tasks.get(&session) {
@@ -435,7 +430,7 @@ impl<
     &mut self,
     mut txn: impl DbTxn,
     session: Session,
-    slash_report: &Vec<Slash>,
+    slash_report: &SlashReport,
   ) {
     // Don't sign slash reports with already retired keys
     if Some(session.0) <= db::LatestRetiredSession::get(&txn).map(|session| session.0) {

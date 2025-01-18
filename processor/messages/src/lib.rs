@@ -11,7 +11,7 @@ use validator_sets_primitives::{Session, KeyPair, SlashReport};
 use coins_primitives::OutInstructionWithBalance;
 use in_instructions_primitives::SignedBatch;
 
-use serai_cosign::{CosignIntent, SignedCosign};
+use serai_cosign::{Cosign, SignedCosign};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
 pub struct SubstrateContext {
@@ -166,7 +166,7 @@ pub mod coordinator {
     /// Cosign the specified Substrate block.
     ///
     /// This is sent by the Coordinator's Tributary scanner.
-    CosignSubstrateBlock { session: Session, intent: CosignIntent },
+    CosignSubstrateBlock { session: Session, cosign: Cosign },
     /// Sign the slash report for this session.
     ///
     /// This is sent by the Coordinator's Tributary scanner.
@@ -322,8 +322,8 @@ impl CoordinatorMessage {
       CoordinatorMessage::Coordinator(msg) => {
         let (sub, id) = match msg {
           // We only cosign a block once, and Reattempt is a separate message
-          coordinator::CoordinatorMessage::CosignSubstrateBlock { intent, .. } => {
-            (0, intent.block_number.encode())
+          coordinator::CoordinatorMessage::CosignSubstrateBlock { cosign, .. } => {
+            (0, cosign.block_number.encode())
           }
           // We only sign one slash report, and Reattempt is a separate message
           coordinator::CoordinatorMessage::SignSlashReport { session, .. } => (1, session.encode()),

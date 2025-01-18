@@ -104,6 +104,24 @@ pub struct Cosign {
   pub cosigner: NetworkId,
 }
 
+impl CosignIntent {
+  /// Convert this into a `Cosign`.
+  pub fn into_cosign(self, cosigner: NetworkId) -> Cosign {
+    let CosignIntent { global_session, block_number, block_hash, notable: _ } = self;
+    Cosign { global_session, block_number, block_hash, cosigner }
+  }
+}
+
+impl Cosign {
+  /// The message to sign to sign this cosign.
+  ///
+  /// This must be signed with schnorrkel, the context set to `COSIGN_CONTEXT`.
+  pub fn signature_message(&self) -> Vec<u8> {
+    // We use a schnorrkel context to domain-separate this
+    self.encode()
+  }
+}
+
 /// A signed cosign.
 #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
 pub struct SignedCosign {
@@ -118,7 +136,7 @@ impl SignedCosign {
     let Ok(signer) = schnorrkel::PublicKey::from_bytes(&signer.0) else { return false };
     let Ok(signature) = schnorrkel::Signature::from_bytes(&self.signature) else { return false };
 
-    signer.verify_simple(COSIGN_CONTEXT, &self.cosign.encode(), &signature).is_ok()
+    signer.verify_simple(COSIGN_CONTEXT, &self.cosign.signature_message(), &signature).is_ok()
   }
 }
 
