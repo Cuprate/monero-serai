@@ -1,26 +1,3 @@
-use messages::{
-  coordinator::{
-    SubstrateSignableId, PlanMeta, CoordinatorMessage as CoordinatorCoordinatorMessage,
-  },
-  CoordinatorMessage,
-};
-
-use serai_env as env;
-
-use message_queue::{Service, client::MessageQueue};
-
-mod db;
-pub use db::*;
-
-mod coordinator;
-pub use coordinator::*;
-
-mod multisigs;
-use multisigs::{MultisigEvent, MultisigManager};
-
-#[cfg(test)]
-mod tests;
-
 async fn handle_coordinator_msg<D: Db, N: Network, Co: Coordinator>(
   txn: &mut D::Transaction<'_>,
   network: &N,
