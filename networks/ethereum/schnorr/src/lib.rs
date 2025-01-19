@@ -4,8 +4,16 @@
 #![allow(non_snake_case)]
 
 /// The initialization bytecode of the Schnorr library.
-pub const INIT_BYTECODE: &str =
-  include_str!(concat!(env!("OUT_DIR"), "/ethereum-schnorr-contract/Schnorr.bin"));
+pub const BYTECODE: &[u8] = {
+  const BYTECODE_HEX: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/ethereum-schnorr-contract/Schnorr.bin"));
+  const BYTECODE: [u8; BYTECODE_HEX.len() / 2] =
+    match const_hex::const_decode_to_array::<{ BYTECODE_HEX.len() / 2 }>(BYTECODE_HEX) {
+      Ok(bytecode) => bytecode,
+      Err(_) => panic!("Schnorr.bin did not contain valid hex"),
+    };
+  &BYTECODE
+};
 
 mod public_key;
 pub use public_key::PublicKey;

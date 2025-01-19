@@ -2209,6 +2209,7 @@ dependencies = [
  "alloy-simple-request-transport",
  "alloy-sol-types",
  "build-solidity-contracts",
+ "const-hex",
  "group",
  "k256",
  "rand_core",
@@ -6959,7 +6960,7 @@ name = "serai-processor-ethereum-primitives"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
- "alloy-core",
+ "alloy-primitives",
  "group",
  "k256",
 ]

@@ -5,12 +5,12 @@
 use group::ff::PrimeField;
 use k256::Scalar;
 
-use alloy_core::primitives::PrimitiveSignature;
+use alloy_primitives::PrimitiveSignature;
 use alloy_consensus::{SignableTransaction, Signed, TxLegacy};
 
 /// The Keccak256 hash function.
 pub fn keccak256(data: impl AsRef<[u8]>) -> [u8; 32] {
-  alloy_core::primitives::keccak256(data.as_ref()).into()
+  alloy_primitives::keccak256(data.as_ref()).into()
 }
 
 /// Deterministically sign a transaction.
@@ -67,7 +67,7 @@ fn test_deterministically_sign() {
   let signed = deterministically_sign(tx.clone());
 
   assert!(signed.recover_signer().is_ok());
-  let one = alloy_core::primitives::U256::from(1u64);
+  let one = alloy_primitives::U256::from(1u64);
   assert_eq!(signed.signature().r(), one);
   assert_eq!(signed.signature().s(), one);
 
