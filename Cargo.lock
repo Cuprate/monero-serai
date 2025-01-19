@@ -6926,14 +6926,18 @@ version = "0.1.0"
 dependencies = [
  "alloy-consensus",
  "alloy-core",
+ "alloy-node-bindings",
  "alloy-provider",
+ "alloy-rpc-client",
  "alloy-rpc-types-eth",
  "alloy-simple-request-transport",
  "alloy-sol-macro",
  "alloy-sol-types",
  "alloy-transport",
  "build-solidity-contracts",
+ "serai-ethereum-test-primitives",
  "serai-processor-ethereum-primitives",
+ "tokio",
 ]
 
 [[package]]

@@ -33,3 +33,11 @@ ethereum-primitives = { package = "serai-processor-ethereum-primitives", path = 
 
 [build-dependencies]
 build-solidity-contracts = { path = "../../../networks/ethereum/build-contracts", default-features = false }
+
+[dev-dependencies]
+alloy-rpc-client = { version = "0.9", default-features = false }
+alloy-node-bindings = { version = "0.9", default-features = false }
+
+tokio = { version = "1.0", default-features = false, features = ["rt-multi-thread", "macros"] }
+
+ethereum-test-primitives = { package = "serai-ethereum-test-primitives", path = "../test-primitives" }
