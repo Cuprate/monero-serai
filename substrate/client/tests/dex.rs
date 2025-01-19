@@ -6,8 +6,8 @@ use serai_abi::in_instructions::primitives::DexCall;
 
 use serai_client::{
   primitives::{
-    Amount, NetworkId, Coin, Balance, BlockHash, insecure_pair_from_name, ExternalAddress,
-    SeraiAddress,
+    BlockHash, NetworkId, Coin, Amount, Balance, SeraiAddress, ExternalAddress,
+    insecure_pair_from_name,
   },
   in_instructions::primitives::{
     InInstruction, InInstructionWithBalance, Batch, IN_INSTRUCTION_EXECUTOR, OutAddress,
@@ -229,7 +229,7 @@ serai_test!(
     let batch = Batch {
       network: NetworkId::Bitcoin,
       id: batch_id,
-      block: block_hash,
+      external_network_block_hash: block_hash,
       instructions: vec![InInstructionWithBalance {
         instruction: InInstruction::Dex(DexCall::SwapAndAddLiquidity(pair.public().into())),
         balance: Balance { coin: Coin::Bitcoin, amount: Amount(20_000_000_000_000) },
@@ -313,7 +313,7 @@ serai_test!(
       let batch = Batch {
         network: NetworkId::Monero,
         id: coin1_batch_id,
-        block: block_hash,
+        external_network_block_hash: block_hash,
         instructions: vec![InInstructionWithBalance {
           instruction: InInstruction::Dex(DexCall::Swap(out_balance, out_address)),
           balance: Balance { coin: coin1, amount: Amount(200_000_000_000_000) },
@@ -353,7 +353,7 @@ serai_test!(
       let batch = Batch {
         network: NetworkId::Ethereum,
         id: coin2_batch_id,
-        block: block_hash,
+        external_network_block_hash: block_hash,
         instructions: vec![InInstructionWithBalance {
           instruction: InInstruction::Dex(DexCall::Swap(out_balance, out_address.clone())),
           balance: Balance { coin: coin2, amount: Amount(200_000_000_000) },
@@ -391,7 +391,7 @@ serai_test!(
       let batch = Batch {
         network: NetworkId::Monero,
         id: coin1_batch_id,
-        block: block_hash,
+        external_network_block_hash: block_hash,
         instructions: vec![InInstructionWithBalance {
           instruction: InInstruction::Dex(DexCall::Swap(out_balance, out_address.clone())),
           balance: Balance { coin: coin1, amount: Amount(100_000_000_000_000) },

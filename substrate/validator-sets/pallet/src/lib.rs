@@ -1203,7 +1203,7 @@ pub mod pallet {
           // There must have been a previous session is PendingSlashReport is populated
           let set =
             ValidatorSet { network, session: Session(Self::session(network).unwrap().0 - 1) };
-          if !key.verify(&report_slashes_message(&set, slashes), signature) {
+          if !key.verify(&slashes.report_slashes_message(), signature) {
             Err(InvalidTransaction::BadProof)?;
           }
 

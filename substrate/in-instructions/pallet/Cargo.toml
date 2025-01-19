@@ -19,6 +19,8 @@ ignored = ["scale", "scale-info"]
 workspace = true
 
 [dependencies]
+bitvec = { version = "1", default-features = false, features = ["alloc"] }
+
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive", "max-encoded-len"] }
 scale-info = { version = "2", default-features = false, features = ["derive"] }
 

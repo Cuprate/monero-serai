@@ -63,10 +63,10 @@ pub mod pallet {
     Batch {
       network: NetworkId,
       publishing_session: Session,
-      external_network_block_hash: [u8; 32],
       id: u32,
+      external_network_block_hash: BlockHash,
       in_instructions_hash: [u8; 32],
-      in_instruction_results: BitVec<u8, Lsb0>,
+      in_instruction_results: bitvec::vec::BitVec<u8, bitvec::order::Lsb0>,
     },
     Halt {
       network: NetworkId,
@@ -101,9 +101,10 @@ pub mod pallet {
     // Use a dedicated transaction layer when executing this InInstruction
     // This lets it individually error without causing any storage modifications
     #[frame_support::transactional]
-    fn execute(instruction: InInstructionWithBalance) -> Result<(), DispatchError> {
-      match instruction.instruction {
+    fn execute(instruction: &InInstructionWithBalance) -> Result<(), DispatchError> {
+      match &instruction.instruction {
         InInstruction::Transfer(address) => {
+          let address = *address;
           Coins::<T>::mint(address.into(), instruction.balance)?;
         }
         InInstruction::Dex(call) => {
@@ -113,6 +114,7 @@ pub mod pallet {
           match call {
             DexCall::SwapAndAddLiquidity(address) => {
               let origin = RawOrigin::Signed(IN_INSTRUCTION_EXECUTOR.into());
+              let address = *address;
               let coin = instruction.balance.coin;
 
               // mint the given coin on the account
@@ -207,7 +209,9 @@ pub mod pallet {
                 let coin_balance =
                   Coins::<T>::balance(IN_INSTRUCTION_EXECUTOR.into(), out_balance.coin);
                 let instruction = OutInstructionWithBalance {
-                  instruction: OutInstruction { address: out_address.as_external().unwrap() },
+                  instruction: OutInstruction {
+                    address: out_address.clone().as_external().unwrap(),
+                  },
                   balance: Balance { coin: out_balance.coin, amount: coin_balance },
                 };
                 Coins::<T>::burn_with_instruction(origin.into(), instruction)?;
@@ -216,12 +220,14 @@ pub mod pallet {
           }
         }
         InInstruction::GenesisLiquidity(address) => {
+          let address = *address;
           Coins::<T>::mint(GENESIS_LIQUIDITY_ACCOUNT.into(), instruction.balance)?;
           GenesisLiq::<T>::add_coin_liquidity(address.into(), instruction.balance)?;
         }
         InInstruction::SwapToStakedSRI(address, network) => {
+          let address = *address;
           Coins::<T>::mint(POL_ACCOUNT.into(), instruction.balance)?;
-          Emissions::<T>::swap_to_staked_sri(address.into(), network, instruction.balance)?;
+          Emissions::<T>::swap_to_staked_sri(address.into(), *network, instruction.balance)?;
         }
       }
       Ok(())
@@ -259,7 +265,7 @@ pub mod pallet {
   impl<T: Config> Pallet<T> {
     #[pallet::call_index(0)]
     #[pallet::weight((0, DispatchClass::Operational))] // TODO
-    pub fn execute_batch(origin: OriginFor<T>, batch: SignedBatch) -> DispatchResult {
+    pub fn execute_batch(origin: OriginFor<T>, _batch: SignedBatch) -> DispatchResult {
       ensure_none(origin)?;
 
       // The entire Batch execution is handled in pre_dispatch
@@ -309,7 +315,7 @@ pub mod pallet {
         Err(InvalidTransaction::BadProof)?;
       }
 
-      let batch = batch.batch;
+      let batch = &batch.batch;
 
       if Halted::<T>::contains_key(network) {
         Err(InvalidTransaction::Custom(1))?;
@@ -343,8 +349,8 @@ pub mod pallet {
       LastBatch::<T>::insert(batch.network, batch.id);
 
       let in_instructions_hash = blake2_256(&batch.instructions.encode());
-      let mut in_instruction_results = BitVec::new();
-      for (i, instruction) in batch.instructions.into_iter().enumerate() {
+      let mut in_instruction_results = bitvec::vec::BitVec::new();
+      for instruction in &batch.instructions {
         // Verify this coin is for this network
         if instruction.balance.coin.network() != batch.network {
           Err(InvalidTransaction::Custom(2))?;
@@ -363,7 +369,7 @@ pub mod pallet {
       });
 
       ValidTransaction::with_tag_prefix("in-instructions")
-        .and_provides((batch.batch.network, batch.batch.id))
+        .and_provides((batch.network, batch.id))
         // Set a 10 block longevity, though this should be included in the next block
         .longevity(10)
         .propagate(true)

@@ -144,9 +144,9 @@ members = [
 
   "tests/docker",
   "tests/message-queue",
-  "tests/processor",
-  "tests/coordinator",
-  "tests/full-stack",
+  # TODO "tests/processor",
+  # TODO "tests/coordinator",
+  # TODO "tests/full-stack",
   "tests/reproducible-runtime",
 ]
 

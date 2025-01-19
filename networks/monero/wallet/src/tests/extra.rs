@@ -9,6 +9,7 @@ use crate::{
 // https://github.com/monero-project/monero/blob/ac02af92867590ca80b2779a7bbeafa99ff94dcb/
 //   tests/unit_tests/test_tx_utils.cpp
 // which is licensed
+#[allow(clippy::empty_line_after_outer_attr)] // rustfmt is for the comment, not for the const
 #[rustfmt::skip]
 /*
 Copyright (c) 2014-2022, The Monero Project

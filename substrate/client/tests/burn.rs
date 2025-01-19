@@ -7,19 +7,22 @@ use blake2::{
 
 use scale::Encode;
 
-use serai_abi::coins::primitives::OutInstructionWithBalance;
 use sp_core::Pair;
 
 use serai_client::{
   primitives::{
-    Amount, NetworkId, Coin, Balance, BlockHash, SeraiAddress, ExternalAddress,
+    BlockHash, NetworkId, Coin, Amount, Balance, SeraiAddress, ExternalAddress,
     insecure_pair_from_name,
   },
+  coins::{
+    primitives::{OutInstruction, OutInstructionWithBalance},
+    CoinsEvent,
+  },
+  validator_sets::primitives::Session,
   in_instructions::{
     InInstructionsEvent,
     primitives::{InInstruction, InInstructionWithBalance, Batch},
   },
-  coins::{primitives::OutInstruction, CoinsEvent},
   Serai, SeraiCoins,
 };
 
@@ -45,7 +48,7 @@ serai_test!(
     let batch = Batch {
       network,
       id,
-      block: block_hash,
+      external_network_block_hash: block_hash,
       instructions: vec![InInstructionWithBalance {
         instruction: InInstruction::Transfer(address),
         balance,
@@ -61,9 +64,11 @@ serai_test!(
         batches,
         vec![InInstructionsEvent::Batch {
           network,
+          publishing_session: Session(0),
           id,
-          block: block_hash,
-          instructions_hash: Blake2b::<U32>::digest(batch.instructions.encode()).into(),
+          external_network_block_hash: block_hash,
+          in_instructions_hash: Blake2b::<U32>::digest(batch.instructions.encode()).into(),
+          in_instruction_results: bitvec::bitvec![u8, bitvec::order::Lsb0; 1; 1],
         }]
       );
 

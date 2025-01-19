@@ -5,8 +5,6 @@ use scale::{Encode, Decode};
 use serai_abi::Call;
 
 use crate::{
-  Vec,
-  primitives::{PublicKey, SeraiAddress},
   timestamp, coins, dex, genesis_liquidity,
   validator_sets::{self, MembershipProof},
   in_instructions, signals, babe, grandpa, RuntimeCall,

@@ -5,6 +5,7 @@ use blake2::{digest::typenum::U32, Digest, Blake2b};
 use scale::Encode;
 use serai_db::{DbTxn, Db};
 
+use serai_primitives::BlockHash;
 use serai_in_instructions_primitives::{MAX_BATCH_SIZE, Batch};
 
 use primitives::{
@@ -106,7 +107,7 @@ impl<D: Db, S: ScannerFeed> ContinuallyRan for BatchTask<D, S> {
         // If this block is notable, create the Batch(s) for it
         if notable {
           let network = S::NETWORK;
-          let external_network_block_hash = index::block_id(&txn, block_number);
+          let external_network_block_hash = BlockHash(index::block_id(&txn, block_number));
           let mut batch_id = BatchDb::<S>::acquire_batch_id(&mut txn);
 
           // start with empty batch
