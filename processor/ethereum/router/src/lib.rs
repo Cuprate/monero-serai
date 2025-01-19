@@ -207,7 +207,7 @@ impl From<&[(SeraiAddress, U256)]> for OutInstructions {
 /// An action which was executed by the Router.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Executed {
-  /// Set a new key.
+  /// New key was set.
   SetKey {
     /// The nonce this was done with.
     nonce: u64,

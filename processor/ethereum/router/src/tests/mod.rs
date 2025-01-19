@@ -22,6 +22,8 @@ use ethereum_deployer::Deployer;
 
 use crate::{Coin, OutInstructions, Router};
 
+mod read_write;
+
 #[test]
 fn execute_reentrancy_guard() {
   let hash = alloy_core::primitives::keccak256(b"ReentrancyGuard Router.execute");
@@ -88,7 +90,7 @@ async fn setup_test(
   // Publish it
   let receipt = ethereum_test_primitives::publish_tx(&provider, tx).await;
   assert!(receipt.status());
-  assert_eq!(u128::from(Router::DEPLOYMENT_GAS), ((receipt.gas_used + 1000) / 1000) * 1000);
+  assert_eq!(Router::DEPLOYMENT_GAS, ((receipt.gas_used + 1000) / 1000) * 1000);
 
   let router = Router::new(provider.clone(), &public_key).await.unwrap().unwrap();
 
@@ -126,10 +128,7 @@ async fn confirm_next_serai_key(
   let tx = ethereum_primitives::deterministically_sign(tx);
   let receipt = ethereum_test_primitives::publish_tx(provider, tx).await;
   assert!(receipt.status());
-  assert_eq!(
-    u128::from(Router::CONFIRM_NEXT_SERAI_KEY_GAS),
-    ((receipt.gas_used + 1000) / 1000) * 1000
-  );
+  assert_eq!(Router::CONFIRM_NEXT_SERAI_KEY_GAS, ((receipt.gas_used + 1000) / 1000) * 1000);
   receipt
 }
 
@@ -167,7 +166,7 @@ async fn test_update_serai_key() {
   let tx = ethereum_primitives::deterministically_sign(tx);
   let receipt = ethereum_test_primitives::publish_tx(&provider, tx).await;
   assert!(receipt.status());
-  assert_eq!(u128::from(Router::UPDATE_SERAI_KEY_GAS), ((receipt.gas_used + 1000) / 1000) * 1000);
+  assert_eq!(Router::UPDATE_SERAI_KEY_GAS, ((receipt.gas_used + 1000) / 1000) * 1000);
 
   assert_eq!(router.key(receipt.block_hash.unwrap().into()).await.unwrap(), Some(key.1));
   assert_eq!(router.next_key(receipt.block_hash.unwrap().into()).await.unwrap(), Some(update_to));
@@ -270,7 +269,7 @@ async fn test_eth_address_out_instruction() {
   let instructions = OutInstructions::from([].as_slice());
   let receipt = publish_outs(&provider, &router, key, 2, Coin::Ether, fee, instructions).await;
   assert!(receipt.status());
-  assert_eq!(u128::from(Router::EXECUTE_BASE_GAS), ((receipt.gas_used + 1000) / 1000) * 1000);
+  assert_eq!(Router::EXECUTE_BASE_GAS, ((receipt.gas_used + 1000) / 1000) * 1000);
 
   assert_eq!(router.next_nonce(receipt.block_hash.unwrap().into()).await.unwrap(), 3);
 }
@@ -310,7 +309,7 @@ async fn escape_hatch(
   let tx = ethereum_primitives::deterministically_sign(tx);
   let receipt = ethereum_test_primitives::publish_tx(provider, tx).await;
   assert!(receipt.status());
-  assert_eq!(u128::from(Router::ESCAPE_HATCH_GAS), ((receipt.gas_used + 1000) / 1000) * 1000);
+  assert_eq!(Router::ESCAPE_HATCH_GAS, ((receipt.gas_used + 1000) / 1000) * 1000);
   receipt
 }
 
