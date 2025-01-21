@@ -2,11 +2,26 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 
+use ::borsh::{BorshSerialize, BorshDeserialize};
+
 use group::ff::PrimeField;
 use k256::Scalar;
 
 use alloy_primitives::PrimitiveSignature;
 use alloy_consensus::{SignableTransaction, Signed, TxLegacy};
+
+mod borsh;
+pub use borsh::*;
+
+/// An index of a log within a block.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
+#[borsh(crate = "::borsh")]
+pub struct LogIndex {
+  /// The hash of the block which produced this log.
+  pub block_hash: [u8; 32],
+  /// The index of this log within the execution of the block.
+  pub index_within_block: u64,
+}
 
 /// The Keccak256 hash function.
 pub fn keccak256(data: impl AsRef<[u8]>) -> [u8; 32] {

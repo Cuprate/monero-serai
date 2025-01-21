@@ -145,7 +145,7 @@ impl ReceivedOutput<<Secp256k1 as Ciphersuite>::G, Address> for Output {
       Output::Output { key, instruction } => {
         writer.write_all(&[0])?;
         writer.write_all(key.to_bytes().as_ref())?;
-        instruction.write(writer)
+        instruction.serialize(writer)
       }
       Output::Eventuality { key, nonce } => {
         writer.write_all(&[1])?;
@@ -164,7 +164,7 @@ impl ReceivedOutput<<Secp256k1 as Ciphersuite>::G, Address> for Output {
     Ok(match kind[0] {
       0 => {
         let key = Secp256k1::read_G(reader)?;
-        let instruction = EthereumInInstruction::read(reader)?;
+        let instruction = EthereumInInstruction::deserialize_reader(reader)?;
         Self::Output { key, instruction }
       }
       1 => {

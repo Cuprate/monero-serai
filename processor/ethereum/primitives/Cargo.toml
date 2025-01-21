@@ -17,6 +17,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 workspace = true
 
 [dependencies]
+borsh = { version = "1", default-features = false, features = ["std", "derive", "de_strict_order"] }
+
 group = { version = "0.13", default-features = false }
 k256 = { version = "^0.13.1", default-features = false, features = ["std", "arithmetic"] }
 

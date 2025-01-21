@@ -2,7 +2,9 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 
-use std::{sync::Arc, io, collections::HashSet};
+use std::{sync::Arc, collections::HashSet};
+
+use borsh::{BorshSerialize, BorshDeserialize};
 
 use group::ff::PrimeField;
 
@@ -16,6 +18,7 @@ use alloy_transport::{TransportErrorKind, RpcError};
 use alloy_simple_request_transport::SimpleRequest;
 use alloy_provider::{Provider, RootProvider};
 
+use ethereum_primitives::LogIndex;
 use ethereum_schnorr::{PublicKey, Signature};
 use ethereum_deployer::Deployer;
 use erc20::{Transfer, Erc20};
@@ -65,12 +68,18 @@ impl From<&Signature> for abi::Signature {
 }
 
 /// A coin on Ethereum.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
 pub enum Coin {
   /// Ether, the native coin of Ethereum.
   Ether,
   /// An ERC20 token.
-  Erc20(Address),
+  Erc20(
+    #[borsh(
+      serialize_with = "ethereum_primitives::serialize_address",
+      deserialize_with = "ethereum_primitives::deserialize_address"
+    )]
+    Address,
+  ),
 }
 
 impl Coin {
@@ -80,98 +89,29 @@ impl Coin {
       Coin::Erc20(address) => *address,
     }
   }
-
-  /// Read a `Coin`.
-  pub fn read<R: io::Read>(reader: &mut R) -> io::Result<Self> {
-    let mut kind = [0xff];
-    reader.read_exact(&mut kind)?;
-    Ok(match kind[0] {
-      0 => Coin::Ether,
-      1 => {
-        let mut address = [0; 20];
-        reader.read_exact(&mut address)?;
-        Coin::Erc20(address.into())
-      }
-      _ => Err(io::Error::other("unrecognized Coin type"))?,
-    })
-  }
-
-  /// Write the `Coin`.
-  pub fn write<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
-    match self {
-      Coin::Ether => writer.write_all(&[0]),
-      Coin::Erc20(token) => {
-        writer.write_all(&[1])?;
-        writer.write_all(token.as_ref())
-      }
-    }
-  }
 }
 
 /// An InInstruction from the Router.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
 pub struct InInstruction {
   /// The ID for this `InInstruction`.
-  pub id: ([u8; 32], u64),
+  pub id: LogIndex,
   /// The address which transferred these coins to Serai.
-  pub from: [u8; 20],
+  #[borsh(
+    serialize_with = "ethereum_primitives::serialize_address",
+    deserialize_with = "ethereum_primitives::deserialize_address"
+  )]
+  pub from: Address,
   /// The coin transferred.
   pub coin: Coin,
   /// The amount transferred.
+  #[borsh(
+    serialize_with = "ethereum_primitives::serialize_u256",
+    deserialize_with = "ethereum_primitives::deserialize_u256"
+  )]
   pub amount: U256,
   /// The data associated with the transfer.
   pub data: Vec<u8>,
-}
-
-impl InInstruction {
-  /// Read an `InInstruction`.
-  pub fn read<R: io::Read>(reader: &mut R) -> io::Result<Self> {
-    let id = {
-      let mut id_hash = [0; 32];
-      reader.read_exact(&mut id_hash)?;
-      let mut id_pos = [0; 8];
-      reader.read_exact(&mut id_pos)?;
-      let id_pos = u64::from_le_bytes(id_pos);
-      (id_hash, id_pos)
-    };
-
-    let mut from = [0; 20];
-    reader.read_exact(&mut from)?;
-
-    let coin = Coin::read(reader)?;
-    let mut amount = [0; 32];
-    reader.read_exact(&mut amount)?;
-    let amount = U256::from_le_slice(&amount);
-
-    let mut data_len = [0; 4];
-    reader.read_exact(&mut data_len)?;
-    let data_len = usize::try_from(u32::from_le_bytes(data_len))
-      .map_err(|_| io::Error::other("InInstruction data exceeded 2**32 in length"))?;
-    let mut data = vec![0; data_len];
-    reader.read_exact(&mut data)?;
-
-    Ok(InInstruction { id, from, coin, amount, data })
-  }
-
-  /// Write the `InInstruction`.
-  pub fn write<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
-    writer.write_all(&self.id.0)?;
-    writer.write_all(&self.id.1.to_le_bytes())?;
-
-    writer.write_all(&self.from)?;
-
-    self.coin.write(writer)?;
-    writer.write_all(&self.amount.as_le_bytes())?;
-
-    writer.write_all(
-      &u32::try_from(self.data.len())
-        .map_err(|_| {
-          io::Error::other("InInstruction being written had data exceeding 2**32 in length")
-        })?
-        .to_le_bytes(),
-    )?;
-    writer.write_all(&self.data)
-  }
 }
 
 /// A list of `OutInstruction`s.
@@ -205,7 +145,7 @@ impl From<&[(SeraiAddress, U256)]> for OutInstructions {
 }
 
 /// An action which was executed by the Router.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
 pub enum Executed {
   /// New key was set.
   SetKey {
@@ -229,44 +169,6 @@ impl Executed {
     match self {
       Executed::SetKey { nonce, .. } | Executed::Batch { nonce, .. } => *nonce,
     }
-  }
-
-  /// Write the Executed.
-  pub fn write(&self, writer: &mut impl io::Write) -> io::Result<()> {
-    match self {
-      Self::SetKey { nonce, key } => {
-        writer.write_all(&[0])?;
-        writer.write_all(&nonce.to_le_bytes())?;
-        writer.write_all(key)
-      }
-      Self::Batch { nonce, message_hash } => {
-        writer.write_all(&[1])?;
-        writer.write_all(&nonce.to_le_bytes())?;
-        writer.write_all(message_hash)
-      }
-    }
-  }
-
-  /// Read an Executed.
-  pub fn read(reader: &mut impl io::Read) -> io::Result<Self> {
-    let mut kind = [0xff];
-    reader.read_exact(&mut kind)?;
-    if kind[0] >= 2 {
-      Err(io::Error::other("unrecognized type of Executed"))?;
-    }
-
-    let mut nonce = [0; 8];
-    reader.read_exact(&mut nonce)?;
-    let nonce = u64::from_le_bytes(nonce);
-
-    let mut payload = [0; 32];
-    reader.read_exact(&mut payload)?;
-
-    Ok(match kind[0] {
-      0 => Self::SetKey { nonce, key: payload },
-      1 => Self::Batch { nonce, message_hash: payload },
-      _ => unreachable!(),
-    })
   }
 }
 
@@ -452,17 +354,17 @@ impl Router {
         ))?;
       }
 
-      let id = (
-        log
+      let id = LogIndex {
+        block_hash: log
           .block_hash
           .ok_or_else(|| {
             TransportErrorKind::Custom("log didn't have its block hash set".to_string().into())
           })?
           .into(),
-        log.log_index.ok_or_else(|| {
+        index_within_block: log.log_index.ok_or_else(|| {
           TransportErrorKind::Custom("log didn't have its index set".to_string().into())
         })?,
-      );
+      };
 
       let tx_hash = log.transaction_hash.ok_or_else(|| {
         TransportErrorKind::Custom("log didn't have its transaction hash set".to_string().into())
@@ -551,7 +453,7 @@ impl Router {
 
       in_instructions.push(InInstruction {
         id,
-        from: *log.from.0,
+        from: log.from,
         coin,
         amount: log.amount,
         data: log.instruction.as_ref().to_vec(),

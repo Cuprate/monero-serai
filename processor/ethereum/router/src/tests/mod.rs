@@ -17,12 +17,11 @@ use alloy_provider::RootProvider;
 
 use alloy_node_bindings::{Anvil, AnvilInstance};
 
+use ethereum_primitives::LogIndex;
 use ethereum_schnorr::{PublicKey, Signature};
 use ethereum_deployer::Deployer;
 
 use crate::{Coin, OutInstructions, Router};
-
-mod read_write;
 
 #[test]
 fn execute_reentrancy_guard() {
@@ -217,7 +216,10 @@ async fn test_eth_in_instruction() {
   assert_eq!(parsed_in_instructions.len(), 1);
   assert_eq!(
     parsed_in_instructions[0].id,
-    (<[u8; 32]>::from(receipt.block_hash.unwrap()), receipt.inner.logs()[0].log_index.unwrap())
+    LogIndex {
+      block_hash: *receipt.block_hash.unwrap(),
+      index_within_block: receipt.inner.logs()[0].log_index.unwrap(),
+    },
   );
   assert_eq!(parsed_in_instructions[0].from, signer);
   assert_eq!(parsed_in_instructions[0].coin, Coin::Ether);

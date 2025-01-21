@@ -9455,6 +9455,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
+ "borsh",
  "group",
  "k256",
 ]
@@ -9475,6 +9476,7 @@ dependencies = [
  "alloy-sol-macro-input",
  "alloy-sol-types",
  "alloy-transport",
+ "borsh",
  "build-solidity-contracts",
  "ethereum-schnorr-contract",
  "group",
