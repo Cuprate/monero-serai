@@ -42,7 +42,8 @@ interface IRouterWithoutCollisions {
 
   /// @notice Emitted when coins escape through the escape hatch
   /// @param coin The coin which escaped
-  event Escaped(address indexed coin);
+  /// @param amount The amount which escaped
+  event Escaped(address indexed coin, uint256 amount);
 
   /// @notice The key for Serai was invalid
   /// @dev This is incomplete and not always guaranteed to be thrown upon an invalid key
@@ -57,13 +58,17 @@ interface IRouterWithoutCollisions {
   /// @notice The call to an ERC20's `transferFrom` failed
   error TransferFromFailed();
 
-  /// @notice `execute` was re-entered
-  error ReenteredExecute();
+  /// @notice A non-reentrant function was re-entered
+  error Reentered();
 
   /// @notice An invalid address to escape to was specified.
   error InvalidEscapeAddress();
+  /// @notice The escape address wasn't a contract.
+  error EscapeAddressWasNotAContract();
   /// @notice Escaping when escape hatch wasn't invoked.
   error EscapeHatchNotInvoked();
+  /// @notice Escaping failed to transfer out.
+  error EscapeFailed();
 
   /// @notice Transfer coins into Serai with an instruction
   /// @param coin The coin to transfer in (address(0) if Ether)

@@ -29,8 +29,8 @@ contract Router is IRouterWithoutCollisions {
   bytes32 constant ACCOUNT_WITHOUT_CODE_CODEHASH = keccak256("");
 
   /// @dev The address in transient storage used for the reentrancy guard
-  bytes32 constant EXECUTE_REENTRANCY_GUARD_SLOT =
-    bytes32(uint256(keccak256("ReentrancyGuard Router.execute")) - 1);
+  bytes32 constant REENTRANCY_GUARD_SLOT =
+    bytes32(uint256(keccak256("ReentrancyGuard Router")) - 1);
 
   /**
    * @dev The next nonce used to determine the address of contracts deployed with CREATE. This is
@@ -63,6 +63,28 @@ contract Router is IRouterWithoutCollisions {
 
   /// @dev The address escaped to
   address private _escapedTo;
+
+  /// @dev Acquire the re-entrancy lock for the lifetime of this transaction
+  modifier nonReentrant() {
+    bytes32 reentrancyGuardSlot = REENTRANCY_GUARD_SLOT;
+    bytes32 priorEntered;
+    // slither-disable-next-line assembly
+    assembly {
+      priorEntered := tload(reentrancyGuardSlot)
+      tstore(reentrancyGuardSlot, 1)
+    }
+    if (priorEntered != bytes32(0)) {
+      revert Reentered();
+    }
+
+    _;
+
+    // Clear the re-entrancy guard to allow multiple transactions to non-re-entrant functions within
+    // a transaction
+    assembly {
+      tstore(reentrancyGuardSlot, 0)
+    }
+  }
 
   /// @dev Set the next Serai key. This does not read from/write to `_nextNonce`
   /// @param nonceUpdatedWith The nonce used to set the next key
@@ -139,15 +161,16 @@ contract Router is IRouterWithoutCollisions {
     bytes32 signatureS;
 
     // slither-disable-next-line assembly
+    uint256 chainID = block.chainid;
     assembly {
       // Read the signature (placed after the function signature)
       signatureC := mload(add(message, 36))
       signatureS := mload(add(message, 68))
 
-      // Overwrite the signature challenge with the nonce
-      mstore(add(message, 36), nonceUsed)
-      // Overwrite the signature response with 0
-      mstore(add(message, 68), 0)
+      // Overwrite the signature challenge with the chain ID
+      mstore(add(message, 36), chainID)
+      // Overwrite the signature response with the nonce
+      mstore(add(message, 68), nonceUsed)
 
       // Calculate the message hash
       messageHash := keccak256(add(message, 32), messageLen)
@@ -404,6 +427,12 @@ contract Router is IRouterWithoutCollisions {
    *  fee.
    *
    *  The hex bytes are to cause a function selector collision with `IRouter.execute`.
+   *
+   *  Re-entrancy is prevented because we emit a bitmask of which `OutInstruction`s succeeded. Doing
+   *  that requires executing the `OutInstruction`s, which may re-enter here. While our application
+   *  of CEI with `verifySignature` prevents replays, re-entrancy would allow out-of-order
+   *  completion for the execution of batches (despite their in-order start of execution) which
+   *  isn't a headache worth dealing with.
    */
   // @param signature The signature by the current key for Serai's Ethereum validators
   // @param coin The coin all of these `OutInstruction`s are for
@@ -411,26 +440,7 @@ contract Router is IRouterWithoutCollisions {
   // @param outs The `OutInstruction`s to act on
   // Each individual call is explicitly metered to ensure there isn't a DoS here
   // slither-disable-next-line calls-loop,reentrancy-events
-  function execute4DE42904() external {
-    /*
-      Prevent re-entrancy.
-
-      We emit a bitmask of which `OutInstruction`s succeeded. Doing that requires executing the
-      `OutInstruction`s, which may re-enter here. While our application of CEI with verifySignature
-      prevents replays, re-entrancy would allow out-of-order execution of batches (despite their
-      in-order start of execution) which isn't a headache worth dealing with.
-    */
-    bytes32 executeReentrancyGuardSlot = EXECUTE_REENTRANCY_GUARD_SLOT;
-    bytes32 priorEntered;
-    // slither-disable-next-line assembly
-    assembly {
-      priorEntered := tload(executeReentrancyGuardSlot)
-      tstore(executeReentrancyGuardSlot, 1)
-    }
-    if (priorEntered != bytes32(0)) {
-      revert ReenteredExecute();
-    }
-
+  function execute4DE42904() external nonReentrant {
     (uint256 nonceUsed, bytes memory args, bytes32 message) = verifySignature(_seraiKey);
     (,, address coin, uint256 fee, IRouter.OutInstruction[] memory outs) =
       abi.decode(args, (bytes32, bytes32, address, uint256, IRouter.OutInstruction[]));
@@ -545,11 +555,15 @@ contract Router is IRouterWithoutCollisions {
       The only check performed accordingly (with no confirmation flow) is that the new contract is
       in fact a contract. This is done to confirm the contract was successfully deployed on this
       blockchain.
+
+      This check is also comprehensive to the zero-address case, but this function doesn't have to
+      be perfectly optimized and it's better to explicitly handle that due to it being its own
+      invariant.
     */
     {
       bytes32 codehash = escapeTo.codehash;
       if ((codehash == bytes32(0)) || (codehash == ACCOUNT_WITHOUT_CODE_CODEHASH)) {
-        revert InvalidEscapeAddress();
+        revert EscapeAddressWasNotAContract();
       }
     }
 
@@ -573,8 +587,6 @@ contract Router is IRouterWithoutCollisions {
       revert EscapeHatchNotInvoked();
     }
 
-    emit Escaped(coin);
-
     // Fetch the amount to escape
     uint256 amount = address(this).balance;
     if (coin != address(0)) {
@@ -582,7 +594,13 @@ contract Router is IRouterWithoutCollisions {
     }
 
     // Perform the transfer
-    transferOut(_escapedTo, coin, amount);
+    // While this can be re-entered to try escaping our balance twice, the outer call will fail
+    if (!transferOut(_escapedTo, coin, amount)) {
+      revert EscapeFailed();
+    }
+
+    // Since we successfully escaped this amount, emit the event for it
+    emit Escaped(coin, amount);
   }
 
   /// @notice Fetch the next nonce to use by an action published to this contract
