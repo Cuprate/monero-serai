@@ -18,6 +18,14 @@ use alloy_provider::{Provider, RootProvider};
 
 use alloy_node_bindings::{Anvil, AnvilInstance};
 
+use scale::Encode;
+use serai_client::{
+  primitives::SeraiAddress,
+  in_instructions::primitives::{
+    InInstruction as SeraiInInstruction, RefundableInInstruction, Shorthand,
+  },
+};
+
 use ethereum_primitives::LogIndex;
 use ethereum_schnorr::{PublicKey, Signature};
 use ethereum_deployer::Deployer;
@@ -26,7 +34,7 @@ use crate::{
   _irouter_abi::IRouterWithoutCollisions::{
     self as IRouter, IRouterWithoutCollisionsErrors as IRouterErrors,
   },
-  Coin, OutInstructions, Router, Executed, Escape,
+  Coin, InInstruction, OutInstructions, Router, Executed, Escape,
 };
 
 mod constants;
@@ -165,6 +173,8 @@ impl Test {
     let tx = ethereum_primitives::deterministically_sign(tx);
     let receipt = ethereum_test_primitives::publish_tx(&self.provider, tx.clone()).await;
     assert!(receipt.status());
+    // Only check the gas is equal when writing to a previously unallocated storage slot, as this
+    // is the highest possible gas cost and what the constant is derived from
     if self.state.key.is_none() {
       assert_eq!(
         CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used),
@@ -229,6 +239,21 @@ impl Test {
     self.state.next_nonce += 1;
     self.state.next_key = Some(next_key);
     self.verify_state().await;
+  }
+
+  fn eth_in_instruction_tx(&self) -> (Coin, U256, Shorthand, TxLegacy) {
+    let coin = Coin::Ether;
+    let amount = U256::from(1);
+    let shorthand = Shorthand::Raw(RefundableInInstruction {
+      origin: None,
+      instruction: SeraiInInstruction::Transfer(SeraiAddress([0xff; 32])),
+    });
+
+    let mut tx = self.router.in_instruction(coin, amount, &shorthand);
+    tx.gas_limit = 1_000_000;
+    tx.gas_price = 100_000_000_000;
+
+    (coin, amount, shorthand, tx)
   }
 
   fn escape_hatch_tx(&self, escape_to: Address) -> TxLegacy {
@@ -297,7 +322,43 @@ async fn test_update_serai_key() {
 
 #[tokio::test]
 async fn test_eth_in_instruction() {
-  todo!("TODO")
+  let mut test = Test::new().await;
+  test.confirm_next_serai_key().await;
+
+  let (coin, amount, shorthand, tx) = test.eth_in_instruction_tx();
+
+  // This should fail if the value mismatches the amount
+  {
+    let mut tx = tx.clone();
+    tx.value = U256::ZERO;
+    assert!(matches!(
+      test.call_and_decode_err(tx).await,
+      IRouterErrors::AmountMismatchesMsgValue(IRouter::AmountMismatchesMsgValue {})
+    ));
+  }
+
+  let tx = ethereum_primitives::deterministically_sign(tx);
+  let receipt = ethereum_test_primitives::publish_tx(&test.provider, tx.clone()).await;
+  assert!(receipt.status());
+
+  let block = receipt.block_number.unwrap();
+  let in_instructions =
+    test.router.in_instructions_unordered(block, block, &HashSet::new()).await.unwrap();
+  assert_eq!(in_instructions.len(), 1);
+  assert_eq!(
+    in_instructions[0],
+    InInstruction {
+      id: LogIndex {
+        block_hash: *receipt.block_hash.unwrap(),
+        index_within_block: receipt.inner.logs()[0].log_index.unwrap(),
+      },
+      transaction_hash: **tx.hash(),
+      from: tx.recover_signer().unwrap(),
+      coin,
+      amount,
+      data: shorthand.encode(),
+    }
+  );
 }
 
 #[tokio::test]
@@ -379,7 +440,10 @@ async fn test_escape_hatch() {
       test.call_and_decode_err(test.confirm_next_serai_key_tx()).await,
       IRouterErrors::EscapeHatchInvoked(IRouter::EscapeHatchInvoked {})
     ));
-    // TODO inInstruction
+    assert!(matches!(
+      test.call_and_decode_err(test.eth_in_instruction_tx().3).await,
+      IRouterErrors::EscapeHatchInvoked(IRouter::EscapeHatchInvoked {})
+    ));
     // TODO execute
     // We reject further attempts to update the escape hatch to prevent the last key from being
     // able to switch from the honest escape hatch to siphoning via a malicious escape hatch (such

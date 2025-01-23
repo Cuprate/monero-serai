@@ -21,6 +21,7 @@ use futures_util::stream::{StreamExt, FuturesUnordered};
 #[rustfmt::skip]
 #[expect(warnings)]
 #[expect(needless_pass_by_value)]
+#[expect(missing_docs)]
 #[expect(clippy::all)]
 #[expect(clippy::ignored_unit_patterns)]
 #[expect(clippy::redundant_closure_for_method_calls)]
@@ -28,11 +29,12 @@ mod abi {
   alloy_sol_macro::sol!("contracts/IERC20.sol");
 }
 use abi::IERC20::{IERC20Calls, transferCall, transferFromCall};
-use abi::SeraiIERC20::{
-  SeraiIERC20Calls, transferWithInInstruction01BB244A8ACall as transferWithInInstructionCall,
+use abi::SeraiIERC20::SeraiIERC20Calls;
+pub use abi::IERC20::Transfer;
+pub use abi::SeraiIERC20::{
+  transferWithInInstruction01BB244A8ACall as transferWithInInstructionCall,
   transferFromWithInInstruction00081948E0Call as transferFromWithInInstructionCall,
 };
-pub use abi::IERC20::Transfer;
 
 #[cfg(test)]
 mod tests;
@@ -156,6 +158,8 @@ impl Erc20 {
           ) => Vec::from(inInstruction),
         }
       } else {
+        // We don't error here so this transfer is propagated up the stack, even without the
+        // InInstruction. In practice, Serai should acknowledge this and return it to the sender
         vec![]
       };
 

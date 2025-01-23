@@ -24,7 +24,10 @@ use alloy_transport::{TransportErrorKind, RpcError};
 use alloy_simple_request_transport::SimpleRequest;
 use alloy_provider::{Provider, RootProvider};
 
-use serai_client::networks::ethereum::Address as SeraiAddress;
+use scale::Encode;
+use serai_client::{
+  in_instructions::primitives::Shorthand, networks::ethereum::Address as SeraiAddress,
+};
 
 use ethereum_primitives::LogIndex;
 use ethereum_schnorr::{PublicKey, Signature};
@@ -309,6 +312,8 @@ impl Router {
   }
 
   /// Construct a transaction to confirm the next key representing Serai.
+  ///
+  /// The gas price is not set and is left to the caller.
   pub fn confirm_next_serai_key(&self, sig: &Signature) -> TxLegacy {
     TxLegacy {
       to: TxKind::Call(self.address),
@@ -328,6 +333,8 @@ impl Router {
   }
 
   /// Construct a transaction to update the key representing Serai.
+  ///
+  /// The gas price is not set and is left to the caller.
   pub fn update_serai_key(&self, public_key: &PublicKey, sig: &Signature) -> TxLegacy {
     TxLegacy {
       to: TxKind::Call(self.address),
@@ -339,6 +346,37 @@ impl Router {
       .into(),
       gas_limit: Self::UPDATE_SERAI_KEY_GAS * 120 / 100,
       ..Default::default()
+    }
+  }
+
+  /// Construct a transaction to send coins with an InInstruction to Serai.
+  ///
+  /// If coin is an ERC20, this will not create a transaction calling the Router but will create a
+  /// top-level transfer of the ERC20 to the Router. This avoids needing to call `approve` before
+  /// publishing the transaction calling the Router.
+  ///
+  /// The gas limit and gas price are not set and are left to the caller.
+  pub fn in_instruction(&self, coin: Coin, amount: U256, in_instruction: &Shorthand) -> TxLegacy {
+    match coin {
+      Coin::Ether => TxLegacy {
+        to: self.address.into(),
+        input: abi::inInstructionCall::new((coin.into(), amount, in_instruction.encode().into()))
+          .abi_encode()
+          .into(),
+        value: amount,
+        ..Default::default()
+      },
+      Coin::Erc20(erc20) => TxLegacy {
+        to: erc20.into(),
+        input: erc20::transferWithInInstructionCall::new((
+          self.address,
+          amount,
+          in_instruction.encode().into(),
+        ))
+        .abi_encode()
+        .into(),
+        ..Default::default()
+      },
     }
   }
 
@@ -360,6 +398,8 @@ impl Router {
   }
 
   /// Construct a transaction to execute a batch of `OutInstruction`s.
+  ///
+  /// The gas limit and gas price are not set and are left to the caller.
   pub fn execute(&self, coin: Coin, fee: U256, outs: OutInstructions, sig: &Signature) -> TxLegacy {
     // TODO
     let gas_limit = Self::EXECUTE_BASE_GAS + outs.0.iter().map(|_| 200_000 + 10_000).sum::<u64>();
@@ -383,6 +423,8 @@ impl Router {
   }
 
   /// Construct a transaction to trigger the escape hatch.
+  ///
+  /// The gas price is not set and is left to the caller.
   pub fn escape_hatch(&self, escape_to: Address, sig: &Signature) -> TxLegacy {
     TxLegacy {
       to: TxKind::Call(self.address),
@@ -393,6 +435,8 @@ impl Router {
   }
 
   /// Construct a transaction to escape coins via the escape hatch.
+  ///
+  /// The gas limit and gas price are not set and are left to the caller.
   pub fn escape(&self, coin: Coin) -> TxLegacy {
     TxLegacy {
       to: TxKind::Call(self.address),
