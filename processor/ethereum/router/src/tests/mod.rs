@@ -10,10 +10,11 @@ use alloy_sol_types::SolCall;
 
 use alloy_consensus::TxLegacy;
 
-use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionReceipt};
+#[rustfmt::skip]
+use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionInput, TransactionRequest, TransactionReceipt};
 use alloy_simple_request_transport::SimpleRequest;
 use alloy_rpc_client::ClientBuilder;
-use alloy_provider::RootProvider;
+use alloy_provider::{Provider, RootProvider};
 
 use alloy_node_bindings::{Anvil, AnvilInstance};
 
@@ -21,39 +22,14 @@ use ethereum_primitives::LogIndex;
 use ethereum_schnorr::{PublicKey, Signature};
 use ethereum_deployer::Deployer;
 
-use crate::{Coin, OutInstructions, Router};
+use crate::{
+  _irouter_abi::IRouterWithoutCollisions::{
+    self as IRouter, IRouterWithoutCollisionsErrors as IRouterErrors,
+  },
+  Coin, OutInstructions, Router, Executed, Escape,
+};
 
-#[test]
-fn execute_reentrancy_guard() {
-  let hash = alloy_core::primitives::keccak256(b"ReentrancyGuard Router.execute");
-  assert_eq!(
-    alloy_core::primitives::hex::encode(
-      (U256::from_be_slice(hash.as_ref()) - U256::from(1u8)).to_be_bytes::<32>()
-    ),
-    // Constant from the Router contract
-    "cf124a063de1614fedbd6b47187f98bf8873a1ae83da5c179a5881162f5b2401",
-  );
-}
-
-#[test]
-fn selector_collisions() {
-  assert_eq!(
-    crate::_irouter_abi::IRouter::confirmNextSeraiKeyCall::SELECTOR,
-    crate::_router_abi::Router::confirmNextSeraiKey34AC53ACCall::SELECTOR
-  );
-  assert_eq!(
-    crate::_irouter_abi::IRouter::updateSeraiKeyCall::SELECTOR,
-    crate::_router_abi::Router::updateSeraiKey5A8542A2Call::SELECTOR
-  );
-  assert_eq!(
-    crate::_irouter_abi::IRouter::executeCall::SELECTOR,
-    crate::_router_abi::Router::execute4DE42904Call::SELECTOR
-  );
-  assert_eq!(
-    crate::_irouter_abi::IRouter::escapeHatchCall::SELECTOR,
-    crate::_router_abi::Router::escapeHatchDCDD91CCCall::SELECTOR
-  );
-}
+mod constants;
 
 pub(crate) fn test_key() -> (Scalar, PublicKey) {
   loop {
@@ -65,111 +41,418 @@ pub(crate) fn test_key() -> (Scalar, PublicKey) {
   }
 }
 
-async fn setup_test(
-) -> (AnvilInstance, Arc<RootProvider<SimpleRequest>>, Router, (Scalar, PublicKey)) {
-  let anvil = Anvil::new().spawn();
+fn sign(key: (Scalar, PublicKey), msg: &[u8]) -> Signature {
+  let nonce = Scalar::random(&mut OsRng);
+  let c = Signature::challenge(ProjectivePoint::GENERATOR * nonce, &key.1, msg);
+  let s = nonce + (c * key.0);
+  Signature::new(c, s).unwrap()
+}
 
-  let provider = Arc::new(RootProvider::new(
-    ClientBuilder::default().transport(SimpleRequest::new(anvil.endpoint()), true),
-  ));
+/// Calculate the gas used by a transaction if none of its calldata's bytes were zero
+struct CalldataAgnosticGas;
+impl CalldataAgnosticGas {
+  fn calculate(tx: &TxLegacy, mut gas_used: u64) -> u64 {
+    const ZERO_BYTE_GAS_COST: u64 = 4;
+    const NON_ZERO_BYTE_GAS_COST: u64 = 16;
+    for b in &tx.input {
+      if *b == 0 {
+        gas_used += NON_ZERO_BYTE_GAS_COST - ZERO_BYTE_GAS_COST;
+      }
+    }
+    gas_used
+  }
+}
 
-  let (private_key, public_key) = test_key();
-  assert!(Router::new(provider.clone(), &public_key).await.unwrap().is_none());
+struct RouterState {
+  next_key: Option<(Scalar, PublicKey)>,
+  key: Option<(Scalar, PublicKey)>,
+  next_nonce: u64,
+  escaped_to: Option<Address>,
+}
 
-  // Deploy the Deployer
-  let receipt = ethereum_test_primitives::publish_tx(&provider, Deployer::deployment_tx()).await;
-  assert!(receipt.status());
+struct Test {
+  #[allow(unused)]
+  anvil: AnvilInstance,
+  provider: Arc<RootProvider<SimpleRequest>>,
+  chain_id: U256,
+  router: Router,
+  state: RouterState,
+}
 
-  // Get the TX to deploy the Router
-  let mut tx = Router::deployment_tx(&public_key);
-  // Set a gas price (100 gwei)
-  tx.gas_price = 100_000_000_000;
-  // Sign it
-  let tx = ethereum_primitives::deterministically_sign(tx);
-  // Publish it
-  let receipt = ethereum_test_primitives::publish_tx(&provider, tx).await;
-  assert!(receipt.status());
-  assert_eq!(Router::DEPLOYMENT_GAS, ((receipt.gas_used + 1000) / 1000) * 1000);
+impl Test {
+  async fn verify_state(&self) {
+    assert_eq!(
+      self.router.next_key(BlockNumberOrTag::Latest.into()).await.unwrap(),
+      self.state.next_key.map(|key| key.1)
+    );
+    assert_eq!(
+      self.router.key(BlockNumberOrTag::Latest.into()).await.unwrap(),
+      self.state.key.map(|key| key.1)
+    );
+    assert_eq!(
+      self.router.next_nonce(BlockNumberOrTag::Latest.into()).await.unwrap(),
+      self.state.next_nonce
+    );
+    assert_eq!(
+      self.router.escaped_to(BlockNumberOrTag::Latest.into()).await.unwrap(),
+      self.state.escaped_to,
+    );
+  }
 
-  let router = Router::new(provider.clone(), &public_key).await.unwrap().unwrap();
+  async fn new() -> Self {
+    // The following is explicitly only evaluated against the cancun network upgrade at this time
+    let anvil = Anvil::new().arg("--hardfork").arg("cancun").spawn();
 
-  (anvil, provider, router, (private_key, public_key))
+    let provider = Arc::new(RootProvider::new(
+      ClientBuilder::default().transport(SimpleRequest::new(anvil.endpoint()), true),
+    ));
+    let chain_id = U256::from(provider.get_chain_id().await.unwrap());
+
+    let (private_key, public_key) = test_key();
+    assert!(Router::new(provider.clone(), &public_key).await.unwrap().is_none());
+
+    // Deploy the Deployer
+    let receipt = ethereum_test_primitives::publish_tx(&provider, Deployer::deployment_tx()).await;
+    assert!(receipt.status());
+
+    let mut tx = Router::deployment_tx(&public_key);
+    tx.gas_limit = 1_100_000;
+    tx.gas_price = 100_000_000_000;
+    let tx = ethereum_primitives::deterministically_sign(tx);
+    let receipt = ethereum_test_primitives::publish_tx(&provider, tx).await;
+    assert!(receipt.status());
+
+    let router = Router::new(provider.clone(), &public_key).await.unwrap().unwrap();
+    let state = RouterState {
+      next_key: Some((private_key, public_key)),
+      key: None,
+      // Nonce 0 should've been consumed by setting the next key to the key initialized with
+      next_nonce: 1,
+      escaped_to: None,
+    };
+
+    // Confirm nonce 0 was used as such
+    {
+      let block = receipt.block_number.unwrap();
+      let executed = router.executed(block, block).await.unwrap();
+      assert_eq!(executed.len(), 1);
+      assert_eq!(executed[0], Executed::NextSeraiKeySet { nonce: 0, key: public_key.eth_repr() });
+    }
+
+    let res = Test { anvil, provider, chain_id, router, state };
+    res.verify_state().await;
+    res
+  }
+
+  async fn call_and_decode_err(&self, tx: TxLegacy) -> IRouterErrors {
+    let call = TransactionRequest::default()
+      .to(self.router.address())
+      .input(TransactionInput::new(tx.input));
+    let call_err = self.provider.call(&call).await.unwrap_err();
+    call_err.as_error_resp().unwrap().as_decoded_error::<IRouterErrors>(true).unwrap()
+  }
+
+  fn confirm_next_serai_key_tx(&self) -> TxLegacy {
+    let msg = Router::confirm_next_serai_key_message(self.chain_id, self.state.next_nonce);
+    let sig = sign(self.state.next_key.unwrap(), &msg);
+
+    self.router.confirm_next_serai_key(&sig)
+  }
+
+  async fn confirm_next_serai_key(&mut self) {
+    let mut tx = self.confirm_next_serai_key_tx();
+    tx.gas_price = 100_000_000_000;
+    let tx = ethereum_primitives::deterministically_sign(tx);
+    let receipt = ethereum_test_primitives::publish_tx(&self.provider, tx.clone()).await;
+    assert!(receipt.status());
+    if self.state.key.is_none() {
+      assert_eq!(
+        CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used),
+        Router::CONFIRM_NEXT_SERAI_KEY_GAS,
+      );
+    } else {
+      assert!(
+        CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used) <
+          Router::CONFIRM_NEXT_SERAI_KEY_GAS
+      );
+    }
+
+    {
+      let block = receipt.block_number.unwrap();
+      let executed = self.router.executed(block, block).await.unwrap();
+      assert_eq!(executed.len(), 1);
+      assert_eq!(
+        executed[0],
+        Executed::SeraiKeyUpdated {
+          nonce: self.state.next_nonce,
+          key: self.state.next_key.unwrap().1.eth_repr()
+        }
+      );
+    }
+
+    self.state.next_nonce += 1;
+    self.state.key = self.state.next_key;
+    self.state.next_key = None;
+    self.verify_state().await;
+  }
+
+  fn update_serai_key_tx(&self) -> ((Scalar, PublicKey), TxLegacy) {
+    let next_key = test_key();
+
+    let msg = Router::update_serai_key_message(self.chain_id, self.state.next_nonce, &next_key.1);
+    let sig = sign(self.state.key.unwrap(), &msg);
+
+    (next_key, self.router.update_serai_key(&next_key.1, &sig))
+  }
+
+  async fn update_serai_key(&mut self) {
+    let (next_key, mut tx) = self.update_serai_key_tx();
+    tx.gas_price = 100_000_000_000;
+    let tx = ethereum_primitives::deterministically_sign(tx);
+    let receipt = ethereum_test_primitives::publish_tx(&self.provider, tx.clone()).await;
+    assert!(receipt.status());
+    assert_eq!(
+      CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used),
+      Router::UPDATE_SERAI_KEY_GAS,
+    );
+
+    {
+      let block = receipt.block_number.unwrap();
+      let executed = self.router.executed(block, block).await.unwrap();
+      assert_eq!(executed.len(), 1);
+      assert_eq!(
+        executed[0],
+        Executed::NextSeraiKeySet { nonce: self.state.next_nonce, key: next_key.1.eth_repr() }
+      );
+    }
+
+    self.state.next_nonce += 1;
+    self.state.next_key = Some(next_key);
+    self.verify_state().await;
+  }
+
+  fn escape_hatch_tx(&self, escape_to: Address) -> TxLegacy {
+    let msg = Router::escape_hatch_message(self.chain_id, self.state.next_nonce, escape_to);
+    let sig = sign(self.state.key.unwrap(), &msg);
+    self.router.escape_hatch(escape_to, &sig)
+  }
+
+  async fn escape_hatch(&mut self) {
+    let mut escape_to = [0; 20];
+    OsRng.fill_bytes(&mut escape_to);
+    let escape_to = Address(escape_to.into());
+
+    // Set the code of the address to escape to so it isn't flagged as a non-contract
+    let () = self.provider.raw_request("anvil_setCode".into(), (escape_to, [0])).await.unwrap();
+
+    let mut tx = self.escape_hatch_tx(escape_to);
+    tx.gas_price = 100_000_000_000;
+    let tx = ethereum_primitives::deterministically_sign(tx);
+    let receipt = ethereum_test_primitives::publish_tx(&self.provider, tx.clone()).await;
+    assert!(receipt.status());
+    assert_eq!(CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used), Router::ESCAPE_HATCH_GAS);
+
+    {
+      let block = receipt.block_number.unwrap();
+      let executed = self.router.executed(block, block).await.unwrap();
+      assert_eq!(executed.len(), 1);
+      assert_eq!(executed[0], Executed::EscapeHatch { nonce: self.state.next_nonce, escape_to });
+    }
+
+    self.state.next_nonce += 1;
+    self.state.escaped_to = Some(escape_to);
+    self.verify_state().await;
+  }
+
+  fn escape_tx(&self, coin: Coin) -> TxLegacy {
+    let mut tx = self.router.escape(coin);
+    tx.gas_limit = 100_000;
+    tx.gas_price = 100_000_000_000;
+    tx
+  }
 }
 
 #[tokio::test]
 async fn test_constructor() {
-  let (_anvil, _provider, router, key) = setup_test().await;
-  assert_eq!(router.next_key(BlockNumberOrTag::Latest.into()).await.unwrap(), Some(key.1));
-  assert_eq!(router.key(BlockNumberOrTag::Latest.into()).await.unwrap(), None);
-  assert_eq!(router.next_nonce(BlockNumberOrTag::Latest.into()).await.unwrap(), 1);
-  assert_eq!(
-    router.escaped_to(BlockNumberOrTag::Latest.into()).await.unwrap(),
-    Address::from([0; 20])
-  );
-}
-
-async fn confirm_next_serai_key(
-  provider: &Arc<RootProvider<SimpleRequest>>,
-  router: &Router,
-  nonce: u64,
-  key: (Scalar, PublicKey),
-) -> TransactionReceipt {
-  let msg = Router::confirm_next_serai_key_message(nonce);
-
-  let nonce = Scalar::random(&mut OsRng);
-  let c = Signature::challenge(ProjectivePoint::GENERATOR * nonce, &key.1, &msg);
-  let s = nonce + (c * key.0);
-
-  let sig = Signature::new(c, s).unwrap();
-
-  let mut tx = router.confirm_next_serai_key(&sig);
-  tx.gas_price = 100_000_000_000;
-  let tx = ethereum_primitives::deterministically_sign(tx);
-  let receipt = ethereum_test_primitives::publish_tx(provider, tx).await;
-  assert!(receipt.status());
-  assert_eq!(Router::CONFIRM_NEXT_SERAI_KEY_GAS, ((receipt.gas_used + 1000) / 1000) * 1000);
-  receipt
+  // `Test::new` internalizes all checks on initial state
+  Test::new().await;
 }
 
 #[tokio::test]
 async fn test_confirm_next_serai_key() {
-  let (_anvil, provider, router, key) = setup_test().await;
-
-  assert_eq!(router.next_key(BlockNumberOrTag::Latest.into()).await.unwrap(), Some(key.1));
-  assert_eq!(router.key(BlockNumberOrTag::Latest.into()).await.unwrap(), None);
-  assert_eq!(router.next_nonce(BlockNumberOrTag::Latest.into()).await.unwrap(), 1);
-
-  let receipt = confirm_next_serai_key(&provider, &router, 1, key).await;
-
-  assert_eq!(router.next_key(receipt.block_hash.unwrap().into()).await.unwrap(), None);
-  assert_eq!(router.key(receipt.block_hash.unwrap().into()).await.unwrap(), Some(key.1));
-  assert_eq!(router.next_nonce(receipt.block_hash.unwrap().into()).await.unwrap(), 2);
+  let mut test = Test::new().await;
+  // TODO: Check all calls fail at this time, including inInstruction
+  test.confirm_next_serai_key().await;
 }
 
 #[tokio::test]
 async fn test_update_serai_key() {
-  let (_anvil, provider, router, key) = setup_test().await;
-  confirm_next_serai_key(&provider, &router, 1, key).await;
+  let mut test = Test::new().await;
+  test.confirm_next_serai_key().await;
+  test.update_serai_key().await;
 
-  let update_to = test_key().1;
-  let msg = Router::update_serai_key_message(2, &update_to);
+  // Once we update to a new key, we should, of course, be able to continue to rotate keys
+  test.confirm_next_serai_key().await;
+}
 
-  let nonce = Scalar::random(&mut OsRng);
-  let c = Signature::challenge(ProjectivePoint::GENERATOR * nonce, &key.1, &msg);
-  let s = nonce + (c * key.0);
+#[tokio::test]
+async fn test_eth_in_instruction() {
+  todo!("TODO")
+}
 
-  let sig = Signature::new(c, s).unwrap();
+#[tokio::test]
+async fn test_erc20_in_instruction() {
+  todo!("TODO")
+}
 
-  let mut tx = router.update_serai_key(&update_to, &sig);
-  tx.gas_price = 100_000_000_000;
-  let tx = ethereum_primitives::deterministically_sign(tx);
-  let receipt = ethereum_test_primitives::publish_tx(&provider, tx).await;
-  assert!(receipt.status());
-  assert_eq!(Router::UPDATE_SERAI_KEY_GAS, ((receipt.gas_used + 1000) / 1000) * 1000);
+#[tokio::test]
+async fn test_eth_address_out_instruction() {
+  todo!("TODO")
+}
 
-  assert_eq!(router.key(receipt.block_hash.unwrap().into()).await.unwrap(), Some(key.1));
-  assert_eq!(router.next_key(receipt.block_hash.unwrap().into()).await.unwrap(), Some(update_to));
-  assert_eq!(router.next_nonce(receipt.block_hash.unwrap().into()).await.unwrap(), 3);
+#[tokio::test]
+async fn test_erc20_address_out_instruction() {
+  todo!("TODO")
+}
+
+#[tokio::test]
+async fn test_eth_code_out_instruction() {
+  todo!("TODO")
+}
+
+#[tokio::test]
+async fn test_erc20_code_out_instruction() {
+  todo!("TODO")
+}
+
+#[tokio::test]
+async fn test_escape_hatch() {
+  let mut test = Test::new().await;
+  test.confirm_next_serai_key().await;
+
+  // Queue another key so the below test cases can run
+  test.update_serai_key().await;
+
+  {
+    // The zero address should be invalid to escape to
+    assert!(matches!(
+      test.call_and_decode_err(test.escape_hatch_tx([0; 20].into())).await,
+      IRouterErrors::InvalidEscapeAddress(IRouter::InvalidEscapeAddress {})
+    ));
+    // Empty addresses should be invalid to escape to
+    assert!(matches!(
+      test.call_and_decode_err(test.escape_hatch_tx([1; 20].into())).await,
+      IRouterErrors::EscapeAddressWasNotAContract(IRouter::EscapeAddressWasNotAContract {})
+    ));
+    // Non-empty addresses without code should be invalid to escape to
+    let tx = ethereum_primitives::deterministically_sign(TxLegacy {
+      to: Address([1; 20].into()).into(),
+      gas_limit: 21_000,
+      gas_price: 100_000_000_000u128,
+      value: U256::from(1),
+      ..Default::default()
+    });
+    let receipt = ethereum_test_primitives::publish_tx(&test.provider, tx.clone()).await;
+    assert!(receipt.status());
+    assert!(matches!(
+      test.call_and_decode_err(test.escape_hatch_tx([1; 20].into())).await,
+      IRouterErrors::EscapeAddressWasNotAContract(IRouter::EscapeAddressWasNotAContract {})
+    ));
+
+    // Escaping at this point in time should fail
+    assert!(matches!(
+      test.call_and_decode_err(test.router.escape(Coin::Ether)).await,
+      IRouterErrors::EscapeHatchNotInvoked(IRouter::EscapeHatchNotInvoked {})
+    ));
+  }
+
+  // Invoke the escape hatch
+  test.escape_hatch().await;
+
+  // Now that the escape hatch has been invoked, all of the following calls should fail
+  {
+    assert!(matches!(
+      test.call_and_decode_err(test.update_serai_key_tx().1).await,
+      IRouterErrors::EscapeHatchInvoked(IRouter::EscapeHatchInvoked {})
+    ));
+    assert!(matches!(
+      test.call_and_decode_err(test.confirm_next_serai_key_tx()).await,
+      IRouterErrors::EscapeHatchInvoked(IRouter::EscapeHatchInvoked {})
+    ));
+    // TODO inInstruction
+    // TODO execute
+    // We reject further attempts to update the escape hatch to prevent the last key from being
+    // able to switch from the honest escape hatch to siphoning via a malicious escape hatch (such
+    // as after the validators represented unstake)
+    assert!(matches!(
+      test.call_and_decode_err(test.escape_hatch_tx(test.state.escaped_to.unwrap())).await,
+      IRouterErrors::EscapeHatchInvoked(IRouter::EscapeHatchInvoked {})
+    ));
+  }
+
+  // Check the escape fn itself
+
+  // ETH
+  {
+    let () = test
+      .provider
+      .raw_request("anvil_setBalance".into(), (test.router.address(), 1))
+      .await
+      .unwrap();
+    let tx = ethereum_primitives::deterministically_sign(test.escape_tx(Coin::Ether));
+    let receipt = ethereum_test_primitives::publish_tx(&test.provider, tx.clone()).await;
+    assert!(receipt.status());
+
+    let block = receipt.block_number.unwrap();
+    assert_eq!(
+      test.router.escapes(block, block).await.unwrap(),
+      vec![Escape { coin: Coin::Ether, amount: U256::from(1) }],
+    );
+
+    assert!(test.provider.get_balance(test.router.address()).await.unwrap() == U256::from(0));
+    assert!(
+      test.provider.get_balance(test.state.escaped_to.unwrap()).await.unwrap() == U256::from(1)
+    );
+  }
+
+  // TODO ERC20 escape
+}
+
+/*
+  event InInstruction(
+    address indexed from, address indexed coin, uint256 amount, bytes instruction
+  );
+  event Batch(uint256 indexed nonce, bytes32 indexed messageHash, bytes results);
+  error InvalidSeraiKey();
+  error InvalidSignature();
+  error AmountMismatchesMsgValue();
+  error TransferFromFailed();
+  error Reentered();
+  error EscapeFailed();
+  function executeArbitraryCode(bytes memory code) external payable;
+  struct Signature {
+    bytes32 c;
+    bytes32 s;
+  }
+  enum DestinationType {
+    Address,
+    Code
+  }
+  struct CodeDestination {
+    uint32 gasLimit;
+    bytes code;
+  }
+  struct OutInstruction {
+    DestinationType destinationType;
+    bytes destination;
+    uint256 amount;
+  }
+  function execute(
+    Signature calldata signature,
+    address coin,
+    uint256 fee,
+    OutInstruction[] calldata outs
+  ) external;
 }
 
 #[tokio::test]
@@ -189,7 +472,7 @@ async fn test_eth_in_instruction() {
     gas_limit: 1_000_000,
     to: TxKind::Call(router.address()),
     value: amount,
-    input: crate::abi::inInstructionCall::new((
+    input: crate::_irouter_abi::inInstructionCall::new((
       [0; 20].into(),
       amount,
       in_instruction.clone().into(),
@@ -225,11 +508,6 @@ async fn test_eth_in_instruction() {
   assert_eq!(parsed_in_instructions[0].coin, Coin::Ether);
   assert_eq!(parsed_in_instructions[0].amount, amount);
   assert_eq!(parsed_in_instructions[0].data, in_instruction);
-}
-
-#[tokio::test]
-async fn test_erc20_in_instruction() {
-  todo!("TODO")
 }
 
 async fn publish_outs(
@@ -275,68 +553,4 @@ async fn test_eth_address_out_instruction() {
 
   assert_eq!(router.next_nonce(receipt.block_hash.unwrap().into()).await.unwrap(), 3);
 }
-
-#[tokio::test]
-async fn test_erc20_address_out_instruction() {
-  todo!("TODO")
-}
-
-#[tokio::test]
-async fn test_eth_code_out_instruction() {
-  todo!("TODO")
-}
-
-#[tokio::test]
-async fn test_erc20_code_out_instruction() {
-  todo!("TODO")
-}
-
-async fn escape_hatch(
-  provider: &Arc<RootProvider<SimpleRequest>>,
-  router: &Router,
-  nonce: u64,
-  key: (Scalar, PublicKey),
-  escape_to: Address,
-) -> TransactionReceipt {
-  let msg = Router::escape_hatch_message(nonce, escape_to);
-
-  let nonce = Scalar::random(&mut OsRng);
-  let c = Signature::challenge(ProjectivePoint::GENERATOR * nonce, &key.1, &msg);
-  let s = nonce + (c * key.0);
-
-  let sig = Signature::new(c, s).unwrap();
-
-  let mut tx = router.escape_hatch(escape_to, &sig);
-  tx.gas_price = 100_000_000_000;
-  let tx = ethereum_primitives::deterministically_sign(tx);
-  let receipt = ethereum_test_primitives::publish_tx(provider, tx).await;
-  assert!(receipt.status());
-  assert_eq!(Router::ESCAPE_HATCH_GAS, ((receipt.gas_used + 1000) / 1000) * 1000);
-  receipt
-}
-
-async fn escape(
-  provider: &Arc<RootProvider<SimpleRequest>>,
-  router: &Router,
-  coin: Coin,
-) -> TransactionReceipt {
-  let mut tx = router.escape(coin.address());
-  tx.gas_price = 100_000_000_000;
-  let tx = ethereum_primitives::deterministically_sign(tx);
-  let receipt = ethereum_test_primitives::publish_tx(provider, tx).await;
-  assert!(receipt.status());
-  receipt
-}
-
-#[tokio::test]
-async fn test_escape_hatch() {
-  let (_anvil, provider, router, key) = setup_test().await;
-  confirm_next_serai_key(&provider, &router, 1, key).await;
-  let escape_to: Address = {
-    let mut escape_to = [0; 20];
-    OsRng.fill_bytes(&mut escape_to);
-    escape_to.into()
-  };
-  escape_hatch(&provider, &router, 2, key, escape_to).await;
-  escape(&provider, &router, Coin::Ether).await;
-}
+*/

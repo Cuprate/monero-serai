@@ -81,8 +81,8 @@ impl ReceivedOutput<<Secp256k1 as Ciphersuite>::G, Address> for Output {
     match self {
       Output::Output { key: _, instruction } => {
         let mut id = [0; 40];
-        id[.. 32].copy_from_slice(&instruction.id.0);
-        id[32 ..].copy_from_slice(&instruction.id.1.to_le_bytes());
+        id[.. 32].copy_from_slice(&instruction.id.block_hash);
+        id[32 ..].copy_from_slice(&instruction.id.index_within_block.to_le_bytes());
         OutputId(id)
       }
       // Yet upon Eventuality completions, we report a Change output to ensure synchrony per the
@@ -97,7 +97,7 @@ impl ReceivedOutput<<Secp256k1 as Ciphersuite>::G, Address> for Output {
 
   fn transaction_id(&self) -> Self::TransactionId {
     match self {
-      Output::Output { key: _, instruction } => instruction.id.0,
+      Output::Output { key: _, instruction } => instruction.transaction_hash,
       Output::Eventuality { key: _, nonce } => {
         let mut id = [0; 32];
         id[.. 8].copy_from_slice(&nonce.to_le_bytes());
@@ -114,7 +114,7 @@ impl ReceivedOutput<<Secp256k1 as Ciphersuite>::G, Address> for Output {
 
   fn presumed_origin(&self) -> Option<Address> {
     match self {
-      Output::Output { key: _, instruction } => Some(Address::from(instruction.from)),
+      Output::Output { key: _, instruction } => Some(Address::Address(*instruction.from.0)),
       Output::Eventuality { .. } => None,
     }
   }

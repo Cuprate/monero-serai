@@ -6,11 +6,13 @@
 static ALLOCATOR: zalloc::ZeroizingAlloc<std::alloc::System> =
   zalloc::ZeroizingAlloc(std::alloc::System);
 
+use core::time::Duration;
 use std::sync::Arc;
 
+use alloy_core::primitives::U256;
 use alloy_simple_request_transport::SimpleRequest;
 use alloy_rpc_client::ClientBuilder;
-use alloy_provider::RootProvider;
+use alloy_provider::{Provider, RootProvider};
 
 use serai_client::validator_sets::primitives::Session;
 
@@ -62,10 +64,26 @@ async fn main() {
     ClientBuilder::default().transport(SimpleRequest::new(bin::url()), true),
   ));
 
+  let chain_id = {
+    let mut delay = Duration::from_secs(5);
+    loop {
+      match provider.get_chain_id().await {
+        Ok(chain_id) => break chain_id,
+        Err(e) => {
+          log::error!("failed to fetch the chain ID on boot: {e:?}");
+          tokio::time::sleep(delay).await;
+          delay = (delay + Duration::from_secs(5)).max(Duration::from_secs(120));
+        }
+      }
+    }
+  };
+
   bin::main_loop::<SetInitialKey, _, KeyGenParams, _>(
     db.clone(),
     Rpc { db: db.clone(), provider: provider.clone() },
-    Scheduler::<bin::Db>::new(SmartContract),
+    Scheduler::<bin::Db>::new(SmartContract {
+      chain_id: U256::from_le_slice(&chain_id.to_le_bytes()),
+    }),
     TransactionPublisher::new(db, provider, {
       let relayer_hostname = env::var("ETHEREUM_RELAYER_HOSTNAME")
         .expect("ethereum relayer hostname wasn't specified")

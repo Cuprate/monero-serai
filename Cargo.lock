@@ -9446,6 +9446,7 @@ dependencies = [
  "alloy-sol-macro",
  "alloy-sol-types",
  "alloy-transport",
+ "serai-processor-ethereum-primitives",
  "tokio",
 ]
 

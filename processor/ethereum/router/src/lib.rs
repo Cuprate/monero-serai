@@ -8,12 +8,15 @@ use borsh::{BorshSerialize, BorshDeserialize};
 
 use group::ff::PrimeField;
 
-use alloy_core::primitives::{hex::FromHex, Address, U256, Bytes, TxKind};
+use alloy_core::primitives::{
+  hex::{self, FromHex},
+  Address, U256, Bytes, TxKind,
+};
 use alloy_sol_types::{SolValue, SolConstructor, SolCall, SolEvent};
 
 use alloy_consensus::TxLegacy;
 
-use alloy_rpc_types_eth::{TransactionRequest, TransactionInput, BlockId, Filter};
+use alloy_rpc_types_eth::{BlockId, Log, Filter, TransactionInput, TransactionRequest};
 use alloy_transport::{TransportErrorKind, RpcError};
 use alloy_simple_request_transport::SimpleRequest;
 use alloy_provider::{Provider, RootProvider};
@@ -51,8 +54,9 @@ mod abi {
   pub use super::_router_abi::Router::constructorCall;
 }
 use abi::{
-  SeraiKeyUpdated as SeraiKeyUpdatedEvent, InInstruction as InInstructionEvent,
-  Executed as ExecutedEvent,
+  NextSeraiKeySet as NextSeraiKeySetEvent, SeraiKeyUpdated as SeraiKeyUpdatedEvent,
+  InInstruction as InInstructionEvent, Batch as BatchEvent, EscapeHatch as EscapeHatchEvent,
+  Escaped as EscapedEvent,
 };
 
 #[cfg(test)]
@@ -81,12 +85,20 @@ pub enum Coin {
     Address,
   ),
 }
-
-impl Coin {
-  fn address(&self) -> Address {
-    match self {
-      Coin::Ether => [0; 20].into(),
-      Coin::Erc20(address) => *address,
+impl From<Coin> for Address {
+  fn from(coin: Coin) -> Address {
+    match coin {
+      Coin::Ether => Address::ZERO,
+      Coin::Erc20(address) => address,
+    }
+  }
+}
+impl From<Address> for Coin {
+  fn from(address: Address) -> Coin {
+    if address == Address::ZERO {
+      Coin::Ether
+    } else {
+      Coin::Erc20(address)
     }
   }
 }
@@ -96,6 +108,8 @@ impl Coin {
 pub struct InInstruction {
   /// The ID for this `InInstruction`.
   pub id: LogIndex,
+  /// The hash of the transaction which caused this.
+  pub transaction_hash: [u8; 32],
   /// The address which transferred these coins to Serai.
   #[borsh(
     serialize_with = "ethereum_primitives::serialize_address",
@@ -126,6 +140,8 @@ impl From<&[(SeraiAddress, U256)]> for OutInstructions {
           #[allow(non_snake_case)]
           let (destinationType, destination) = match address {
             SeraiAddress::Address(address) => {
+              // Per the documentation, `DestinationType::Address`'s value is an ABI-encoded
+              // address
               (abi::DestinationType::Address, (Address::from(address)).abi_encode())
             }
             SeraiAddress::Contract(contract) => (
@@ -147,41 +163,90 @@ impl From<&[(SeraiAddress, U256)]> for OutInstructions {
 /// An action which was executed by the Router.
 #[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
 pub enum Executed {
-  /// New key was set.
-  SetKey {
+  /// Next key was set.
+  NextSeraiKeySet {
     /// The nonce this was done with.
     nonce: u64,
     /// The key set.
     key: [u8; 32],
   },
-  /// Executed Batch.
+  /// The next key was updated to.
+  SeraiKeyUpdated {
+    /// The nonce this was done with.
+    nonce: u64,
+    /// The key set.
+    key: [u8; 32],
+  },
+  /// Executed batch of `OutInstruction`s.
   Batch {
     /// The nonce this was done with.
     nonce: u64,
     /// The hash of the signed message for the Batch executed.
     message_hash: [u8; 32],
   },
+  /// The escape hatch was set.
+  EscapeHatch {
+    /// The nonce this was done with.
+    nonce: u64,
+    /// The address set to escape to.
+    #[borsh(
+      serialize_with = "ethereum_primitives::serialize_address",
+      deserialize_with = "ethereum_primitives::deserialize_address"
+    )]
+    escape_to: Address,
+  },
 }
 
 impl Executed {
   /// The nonce consumed by this executed event.
+  ///
+  /// This is a `u64` despite the contract defining the nonce as a `u256`. Since the nonce is
+  /// incremental, the u64 will never be exhausted.
   pub fn nonce(&self) -> u64 {
     match self {
-      Executed::SetKey { nonce, .. } | Executed::Batch { nonce, .. } => *nonce,
+      Executed::NextSeraiKeySet { nonce, .. } |
+      Executed::SeraiKeyUpdated { nonce, .. } |
+      Executed::Batch { nonce, .. } |
+      Executed::EscapeHatch { nonce, .. } => *nonce,
     }
   }
 }
 
+/// An Escape from the Router.
+#[derive(Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
+pub struct Escape {
+  /// The coin escaped.
+  pub coin: Coin,
+  /// The amount escaped.
+  #[borsh(
+    serialize_with = "ethereum_primitives::serialize_u256",
+    deserialize_with = "ethereum_primitives::deserialize_u256"
+  )]
+  pub amount: U256,
+}
+
 /// A view of the Router for Serai.
 #[derive(Clone, Debug)]
-pub struct Router(Arc<RootProvider<SimpleRequest>>, Address);
+pub struct Router {
+  provider: Arc<RootProvider<SimpleRequest>>,
+  address: Address,
+}
 impl Router {
-  const DEPLOYMENT_GAS: u64 = 1_000_000;
-  const CONFIRM_NEXT_SERAI_KEY_GAS: u64 = 58_000;
-  const UPDATE_SERAI_KEY_GAS: u64 = 61_000;
+  /*
+    The gas limits to use for transactions.
+
+    These are expected to be constant as a distributed group signs the transactions invoking these
+    calls. Having the gas be constant prevents needing to run a protocol to determine what gas to
+    use.
+
+    These gas limits may break if/when gas opcodes undergo repricing. In that case, this library is
+    expected to be modified with these made parameters. The caller would then be expected to pass
+    the correct set of prices for the network they're operating on.
+  */
+  const CONFIRM_NEXT_SERAI_KEY_GAS: u64 = 57_736;
+  const UPDATE_SERAI_KEY_GAS: u64 = 60_045;
   const EXECUTE_BASE_GAS: u64 = 48_000;
-  const ESCAPE_HATCH_GAS: u64 = 58_000;
-  const ESCAPE_GAS: u64 = 200_000;
+  const ESCAPE_HATCH_GAS: u64 = 61_238;
 
   fn code() -> Vec<u8> {
     const BYTECODE: &[u8] =
@@ -198,11 +263,10 @@ impl Router {
 
   /// Obtain the transaction to deploy this contract.
   ///
-  /// This transaction assumes the `Deployer` has already been deployed.
+  /// This transaction assumes the `Deployer` has already been deployed. The gas limit and gas
+  /// price are not set and are left to the caller.
   pub fn deployment_tx(initial_serai_key: &PublicKey) -> TxLegacy {
-    let mut tx = Deployer::deploy_tx(Self::init_code(initial_serai_key));
-    tx.gas_limit = Self::DEPLOYMENT_GAS * 120 / 100;
-    tx
+    Deployer::deploy_tx(Self::init_code(initial_serai_key))
   }
 
   /// Create a new view of the Router.
@@ -216,25 +280,25 @@ impl Router {
     let Some(deployer) = Deployer::new(provider.clone()).await? else {
       return Ok(None);
     };
-    let Some(deployment) = deployer
+    let Some(address) = deployer
       .find_deployment(ethereum_primitives::keccak256(Self::init_code(initial_serai_key)))
       .await?
     else {
       return Ok(None);
     };
-    Ok(Some(Self(provider, deployment)))
+    Ok(Some(Self { provider, address }))
   }
 
   /// The address of the router.
   pub fn address(&self) -> Address {
-    self.1
+    self.address
   }
 
   /// Get the message to be signed in order to confirm the next key for Serai.
-  pub fn confirm_next_serai_key_message(nonce: u64) -> Vec<u8> {
+  pub fn confirm_next_serai_key_message(chain_id: U256, nonce: u64) -> Vec<u8> {
     abi::confirmNextSeraiKeyCall::new((abi::Signature {
-      c: U256::try_from(nonce).unwrap().into(),
-      s: U256::ZERO.into(),
+      c: chain_id.into(),
+      s: U256::try_from(nonce).unwrap().into(),
     },))
     .abi_encode()
   }
@@ -242,7 +306,7 @@ impl Router {
   /// Construct a transaction to confirm the next key representing Serai.
   pub fn confirm_next_serai_key(&self, sig: &Signature) -> TxLegacy {
     TxLegacy {
-      to: TxKind::Call(self.1),
+      to: TxKind::Call(self.address),
       input: abi::confirmNextSeraiKeyCall::new((abi::Signature::from(sig),)).abi_encode().into(),
       gas_limit: Self::CONFIRM_NEXT_SERAI_KEY_GAS * 120 / 100,
       ..Default::default()
@@ -250,9 +314,9 @@ impl Router {
   }
 
   /// Get the message to be signed in order to update the key for Serai.
-  pub fn update_serai_key_message(nonce: u64, key: &PublicKey) -> Vec<u8> {
+  pub fn update_serai_key_message(chain_id: U256, nonce: u64, key: &PublicKey) -> Vec<u8> {
     abi::updateSeraiKeyCall::new((
-      abi::Signature { c: U256::try_from(nonce).unwrap().into(), s: U256::ZERO.into() },
+      abi::Signature { c: chain_id.into(), s: U256::try_from(nonce).unwrap().into() },
       key.eth_repr().into(),
     ))
     .abi_encode()
@@ -261,7 +325,7 @@ impl Router {
   /// Construct a transaction to update the key representing Serai.
   pub fn update_serai_key(&self, public_key: &PublicKey, sig: &Signature) -> TxLegacy {
     TxLegacy {
-      to: TxKind::Call(self.1),
+      to: TxKind::Call(self.address),
       input: abi::updateSeraiKeyCall::new((
         abi::Signature::from(sig),
         public_key.eth_repr().into(),
@@ -274,10 +338,16 @@ impl Router {
   }
 
   /// Get the message to be signed in order to execute a series of `OutInstruction`s.
-  pub fn execute_message(nonce: u64, coin: Coin, fee: U256, outs: OutInstructions) -> Vec<u8> {
+  pub fn execute_message(
+    chain_id: U256,
+    nonce: u64,
+    coin: Coin,
+    fee: U256,
+    outs: OutInstructions,
+  ) -> Vec<u8> {
     abi::executeCall::new((
-      abi::Signature { c: U256::try_from(nonce).unwrap().into(), s: U256::ZERO.into() },
-      coin.address(),
+      abi::Signature { c: chain_id.into(), s: U256::try_from(nonce).unwrap().into() },
+      Address::from(coin),
       fee,
       outs.0,
     ))
@@ -289,8 +359,8 @@ impl Router {
     // TODO
     let gas_limit = Self::EXECUTE_BASE_GAS + outs.0.iter().map(|_| 200_000 + 10_000).sum::<u64>();
     TxLegacy {
-      to: TxKind::Call(self.1),
-      input: abi::executeCall::new((abi::Signature::from(sig), coin.address(), fee, outs.0))
+      to: TxKind::Call(self.address),
+      input: abi::executeCall::new((abi::Signature::from(sig), Address::from(coin), fee, outs.0))
         .abi_encode()
         .into(),
       gas_limit: gas_limit * 120 / 100,
@@ -299,9 +369,9 @@ impl Router {
   }
 
   /// Get the message to be signed in order to trigger the escape hatch.
-  pub fn escape_hatch_message(nonce: u64, escape_to: Address) -> Vec<u8> {
+  pub fn escape_hatch_message(chain_id: U256, nonce: u64, escape_to: Address) -> Vec<u8> {
     abi::escapeHatchCall::new((
-      abi::Signature { c: U256::try_from(nonce).unwrap().into(), s: U256::ZERO.into() },
+      abi::Signature { c: chain_id.into(), s: U256::try_from(nonce).unwrap().into() },
       escape_to,
     ))
     .abi_encode()
@@ -310,7 +380,7 @@ impl Router {
   /// Construct a transaction to trigger the escape hatch.
   pub fn escape_hatch(&self, escape_to: Address, sig: &Signature) -> TxLegacy {
     TxLegacy {
-      to: TxKind::Call(self.1),
+      to: TxKind::Call(self.address),
       input: abi::escapeHatchCall::new((abi::Signature::from(sig), escape_to)).abi_encode().into(),
       gas_limit: Self::ESCAPE_HATCH_GAS * 120 / 100,
       ..Default::default()
@@ -318,11 +388,10 @@ impl Router {
   }
 
   /// Construct a transaction to escape coins via the escape hatch.
-  pub fn escape(&self, coin: Address) -> TxLegacy {
+  pub fn escape(&self, coin: Coin) -> TxLegacy {
     TxLegacy {
-      to: TxKind::Call(self.1),
-      input: abi::escapeCall::new((coin,)).abi_encode().into(),
-      gas_limit: Self::ESCAPE_GAS,
+      to: TxKind::Call(self.address),
+      input: abi::escapeCall::new((Address::from(coin),)).abi_encode().into(),
       ..Default::default()
     }
   }
@@ -334,9 +403,10 @@ impl Router {
     allowed_tokens: &HashSet<Address>,
   ) -> Result<Vec<InInstruction>, RpcError<TransportErrorKind>> {
     // The InInstruction events for this block
-    let filter = Filter::new().from_block(block).to_block(block).address(self.1);
+    let filter = Filter::new().from_block(block).to_block(block).address(self.address);
     let filter = filter.event_signature(InInstructionEvent::SIGNATURE_HASH);
-    let logs = self.0.get_logs(&filter).await?;
+    let mut logs = self.provider.get_logs(&filter).await?;
+    logs.sort_by_key(|log| (log.block_number, log.log_index));
 
     /*
       We check that for all InInstructions for ERC20s emitted, a corresponding transfer occurred.
@@ -348,7 +418,7 @@ impl Router {
     let mut in_instructions = vec![];
     for log in logs {
       // Double check the address which emitted this log
-      if log.address() != self.1 {
+      if log.address() != self.address {
         Err(TransportErrorKind::Custom(
           "node returned a log from a different address than requested".to_string().into(),
         ))?;
@@ -366,7 +436,7 @@ impl Router {
         })?,
       };
 
-      let tx_hash = log.transaction_hash.ok_or_else(|| {
+      let transaction_hash = log.transaction_hash.ok_or_else(|| {
         TransportErrorKind::Custom("log didn't have its transaction hash set".to_string().into())
       })?;
 
@@ -380,21 +450,19 @@ impl Router {
         .inner
         .data;
 
-      let coin = if log.coin.0 == [0; 20] {
-        Coin::Ether
-      } else {
-        let token = log.coin;
-
+      let coin = Coin::from(log.coin);
+      if let Coin::Erc20(token) = coin {
         if !allowed_tokens.contains(&token) {
           continue;
         }
 
         // Get all logs for this TX
-        let receipt = self.0.get_transaction_receipt(tx_hash).await?.ok_or_else(|| {
-          TransportErrorKind::Custom(
-            "node didn't have the receipt for a transaction it had".to_string().into(),
-          )
-        })?;
+        let receipt =
+          self.provider.get_transaction_receipt(transaction_hash).await?.ok_or_else(|| {
+            TransportErrorKind::Custom(
+              "node didn't have the receipt for a transaction it had".to_string().into(),
+            )
+          })?;
         let tx_logs = receipt.inner.logs();
 
         /*
@@ -402,9 +470,11 @@ impl Router {
           Accordingly, when looking for the matching transfer, disregard the top-level transfer (if
           one exists).
         */
-        if let Some(matched) = Erc20::match_top_level_transfer(&self.0, tx_hash, self.1).await? {
+        if let Some(matched) =
+          Erc20::match_top_level_transfer(&self.provider, transaction_hash, self.address).await?
+        {
           // Mark this log index as used so it isn't used again
-          transfer_check.insert(matched.id.1);
+          transfer_check.insert(matched.id.index_within_block);
         }
 
         // Find a matching transfer log
@@ -432,7 +502,7 @@ impl Router {
           }
           let Ok(transfer) = Transfer::decode_log(&tx_log.inner.clone(), true) else { continue };
           // Check if this is a transfer to us for the expected amount
-          if (transfer.to == self.1) && (transfer.value == log.amount) {
+          if (transfer.to == self.address) && (transfer.value == log.amount) {
             transfer_check.insert(log_index);
             found_transfer = true;
             break;
@@ -447,12 +517,11 @@ impl Router {
             "ERC20 InInstruction with no matching transfer log".to_string().into(),
           ))?;
         }
-
-        Coin::Erc20(token)
       };
 
       in_instructions.push(InInstruction {
         id,
+        transaction_hash: *transaction_hash,
         from: log.from,
         coin,
         amount: log.amount,
@@ -464,74 +533,123 @@ impl Router {
   }
 
   /// Fetch the executed actions from this block.
-  pub async fn executed(&self, block: u64) -> Result<Vec<Executed>, RpcError<TransportErrorKind>> {
+  pub async fn executed(
+    &self,
+    from_block: u64,
+    to_block: u64,
+  ) -> Result<Vec<Executed>, RpcError<TransportErrorKind>> {
+    fn decode<E: SolEvent>(log: &Log) -> Result<E, RpcError<TransportErrorKind>> {
+      Ok(
+        log
+          .log_decode::<E>()
+          .map_err(|e| {
+            TransportErrorKind::Custom(
+              format!("filtered to event yet couldn't decode log: {e:?}").into(),
+            )
+          })?
+          .inner
+          .data,
+      )
+    }
+
+    let filter = Filter::new().from_block(from_block).to_block(to_block).address(self.address);
+    let mut logs = self.provider.get_logs(&filter).await?;
+    logs.sort_by_key(|log| (log.block_number, log.log_index));
+
     let mut res = vec![];
+    for log in logs {
+      // Double check the address which emitted this log
+      if log.address() != self.address {
+        Err(TransportErrorKind::Custom(
+          "node returned a log from a different address than requested".to_string().into(),
+        ))?;
+      }
 
-    {
-      let filter = Filter::new().from_block(block).to_block(block).address(self.1);
-      let filter = filter.event_signature(SeraiKeyUpdatedEvent::SIGNATURE_HASH);
-      let logs = self.0.get_logs(&filter).await?;
-
-      for log in logs {
-        // Double check the address which emitted this log
-        if log.address() != self.1 {
-          Err(TransportErrorKind::Custom(
-            "node returned a log from a different address than requested".to_string().into(),
-          ))?;
+      match log.topics().first() {
+        Some(&NextSeraiKeySetEvent::SIGNATURE_HASH) => {
+          let event = decode::<NextSeraiKeySetEvent>(&log)?;
+          res.push(Executed::NextSeraiKeySet {
+            nonce: event.nonce.try_into().map_err(|e| {
+              TransportErrorKind::Custom(format!("failed to convert nonce to u64: {e:?}").into())
+            })?,
+            key: event.key.into(),
+          });
         }
-
-        let log = log
-          .log_decode::<SeraiKeyUpdatedEvent>()
-          .map_err(|e| {
-            TransportErrorKind::Custom(
-              format!("filtered to SeraiKeyUpdatedEvent yet couldn't decode log: {e:?}").into(),
-            )
-          })?
-          .inner
-          .data;
-
-        res.push(Executed::SetKey {
-          nonce: log.nonce.try_into().map_err(|e| {
-            TransportErrorKind::Custom(format!("failed to convert nonce to u64: {e:?}").into())
-          })?,
-          key: log.key.into(),
-        });
+        Some(&SeraiKeyUpdatedEvent::SIGNATURE_HASH) => {
+          let event = decode::<SeraiKeyUpdatedEvent>(&log)?;
+          res.push(Executed::SeraiKeyUpdated {
+            nonce: event.nonce.try_into().map_err(|e| {
+              TransportErrorKind::Custom(format!("failed to convert nonce to u64: {e:?}").into())
+            })?,
+            key: event.key.into(),
+          });
+        }
+        Some(&BatchEvent::SIGNATURE_HASH) => {
+          let event = decode::<BatchEvent>(&log)?;
+          res.push(Executed::Batch {
+            nonce: event.nonce.try_into().map_err(|e| {
+              TransportErrorKind::Custom(format!("failed to convert nonce to u64: {e:?}").into())
+            })?,
+            message_hash: event.messageHash.into(),
+          });
+        }
+        Some(&EscapeHatchEvent::SIGNATURE_HASH) => {
+          let event = decode::<EscapeHatchEvent>(&log)?;
+          res.push(Executed::EscapeHatch {
+            nonce: event.nonce.try_into().map_err(|e| {
+              TransportErrorKind::Custom(format!("failed to convert nonce to u64: {e:?}").into())
+            })?,
+            escape_to: event.escapeTo,
+          });
+        }
+        Some(&InInstructionEvent::SIGNATURE_HASH | &EscapedEvent::SIGNATURE_HASH) => {}
+        unrecognized => Err(TransportErrorKind::Custom(
+          format!("unrecognized event yielded by the Router: {:?}", unrecognized.map(hex::encode))
+            .into(),
+        ))?,
       }
     }
 
-    {
-      let filter = Filter::new().from_block(block).to_block(block).address(self.1);
-      let filter = filter.event_signature(ExecutedEvent::SIGNATURE_HASH);
-      let logs = self.0.get_logs(&filter).await?;
+    Ok(res)
+  }
 
-      for log in logs {
-        // Double check the address which emitted this log
-        if log.address() != self.1 {
-          Err(TransportErrorKind::Custom(
-            "node returned a log from a different address than requested".to_string().into(),
-          ))?;
-        }
+  /// Fetch the `Escape`s from the smart contract through the escape hatch.
+  pub async fn escapes(
+    &self,
+    from_block: u64,
+    to_block: u64,
+  ) -> Result<Vec<Escape>, RpcError<TransportErrorKind>> {
+    let filter = Filter::new().from_block(from_block).to_block(to_block).address(self.address);
+    let mut logs =
+      self.provider.get_logs(&filter.event_signature(EscapedEvent::SIGNATURE_HASH)).await?;
+    logs.sort_by_key(|log| (log.block_number, log.log_index));
 
-        let log = log
-          .log_decode::<ExecutedEvent>()
-          .map_err(|e| {
-            TransportErrorKind::Custom(
-              format!("filtered to ExecutedEvent yet couldn't decode log: {e:?}").into(),
-            )
-          })?
-          .inner
-          .data;
-
-        res.push(Executed::Batch {
-          nonce: log.nonce.try_into().map_err(|e| {
-            TransportErrorKind::Custom(format!("failed to convert nonce to u64: {e:?}").into())
-          })?,
-          message_hash: log.messageHash.into(),
-        });
+    let mut res = vec![];
+    for log in logs {
+      // Double check the address which emitted this log
+      if log.address() != self.address {
+        Err(TransportErrorKind::Custom(
+          "node returned a log from a different address than requested".to_string().into(),
+        ))?;
       }
-    }
+      // Double check the topic
+      if log.topics().first() != Some(&EscapedEvent::SIGNATURE_HASH) {
+        Err(TransportErrorKind::Custom(
+          "node returned a log for a different topic than filtered to".to_string().into(),
+        ))?;
+      }
 
-    res.sort_by_key(Executed::nonce);
+      let log = log
+        .log_decode::<EscapedEvent>()
+        .map_err(|e| {
+          TransportErrorKind::Custom(
+            format!("filtered to event yet couldn't decode log: {e:?}").into(),
+          )
+        })?
+        .inner
+        .data;
+      res.push(Escape { coin: Coin::from(log.coin), amount: log.amount });
+    }
 
     Ok(res)
   }
@@ -541,8 +659,9 @@ impl Router {
     block: BlockId,
     call: Vec<u8>,
   ) -> Result<Option<PublicKey>, RpcError<TransportErrorKind>> {
-    let call = TransactionRequest::default().to(self.1).input(TransactionInput::new(call.into()));
-    let bytes = self.0.call(&call).block(block).await?;
+    let call =
+      TransactionRequest::default().to(self.address).input(TransactionInput::new(call.into()));
+    let bytes = self.provider.call(&call).block(block).await?;
     // This is fine as both key calls share a return type
     let res = abi::nextSeraiKeyCall::abi_decode_returns(&bytes, true)
       .map_err(|e| TransportErrorKind::Custom(format!("failed to decode key: {e:?}").into()))?;
@@ -575,9 +694,9 @@ impl Router {
   /// Fetch the nonce of the next action to execute
   pub async fn next_nonce(&self, block: BlockId) -> Result<u64, RpcError<TransportErrorKind>> {
     let call = TransactionRequest::default()
-      .to(self.1)
+      .to(self.address)
       .input(TransactionInput::new(abi::nextNonceCall::new(()).abi_encode().into()));
-    let bytes = self.0.call(&call).block(block).await?;
+    let bytes = self.provider.call(&call).block(block).await?;
     let res = abi::nextNonceCall::abi_decode_returns(&bytes, true)
       .map_err(|e| TransportErrorKind::Custom(format!("failed to decode nonce: {e:?}").into()))?;
     Ok(u64::try_from(res._0).map_err(|_| {
@@ -586,14 +705,17 @@ impl Router {
   }
 
   /// Fetch the address the escape hatch was set to
-  pub async fn escaped_to(&self, block: BlockId) -> Result<Address, RpcError<TransportErrorKind>> {
+  pub async fn escaped_to(
+    &self,
+    block: BlockId,
+  ) -> Result<Option<Address>, RpcError<TransportErrorKind>> {
     let call = TransactionRequest::default()
-      .to(self.1)
+      .to(self.address)
       .input(TransactionInput::new(abi::escapedToCall::new(()).abi_encode().into()));
-    let bytes = self.0.call(&call).block(block).await?;
+    let bytes = self.provider.call(&call).block(block).await?;
     let res = abi::escapedToCall::abi_decode_returns(&bytes, true).map_err(|e| {
       TransportErrorKind::Custom(format!("failed to decode the address escaped to: {e:?}").into())
     })?;
-    Ok(res._0)
+    Ok(if res._0 == Address([0; 20].into()) { None } else { Some(res._0) })
   }
 }

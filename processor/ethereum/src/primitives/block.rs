@@ -99,6 +99,7 @@ impl primitives::Block for FullEpoch {
       let Some(expected) =
         eventualities.active_eventualities.remove(executed.nonce().to_le_bytes().as_slice())
       else {
+        // TODO: Why is this a continue, not an assert?
         continue;
       };
       assert_eq!(

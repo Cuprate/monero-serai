@@ -165,12 +165,14 @@ impl<D: Db> ScannerFeed for Rpc<D> {
         let mut instructions = router.in_instructions(block.number, &HashSet::from(TOKENS)).await?;
 
         for token in TOKENS {
-          for TopLevelTransfer { id, from, amount, data } in Erc20::new(provider.clone(), **token)
-            .top_level_transfers(block.number, router.address())
-            .await?
+          for TopLevelTransfer { id, transaction_hash, from, amount, data } in
+            Erc20::new(provider.clone(), **token)
+              .top_level_transfers(block.number, router.address())
+              .await?
           {
             instructions.push(EthereumInInstruction {
               id,
+              transaction_hash,
               from,
               coin: EthereumCoin::Erc20(token),
               amount,
@@ -179,7 +181,7 @@ impl<D: Db> ScannerFeed for Rpc<D> {
           }
         }
 
-        let executed = router.executed(block.number).await?;
+        let executed = router.executed(block.number, block.number).await?;
 
         Ok((instructions, executed))
       }

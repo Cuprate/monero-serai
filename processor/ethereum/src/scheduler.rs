@@ -36,7 +36,9 @@ fn balance_to_ethereum_amount(balance: Balance) -> U256 {
 }
 
 #[derive(Clone)]
-pub(crate) struct SmartContract;
+pub(crate) struct SmartContract {
+  pub(crate) chain_id: U256,
+}
 impl<D: Db> smart_contract_scheduler::SmartContract<Rpc<D>> for SmartContract {
   type SignableTransaction = Action;
 
@@ -46,8 +48,11 @@ impl<D: Db> smart_contract_scheduler::SmartContract<Rpc<D>> for SmartContract {
     _retiring_key: KeyFor<Rpc<D>>,
     new_key: KeyFor<Rpc<D>>,
   ) -> (Self::SignableTransaction, EventualityFor<Rpc<D>>) {
-    let action =
-      Action::SetKey { nonce, key: PublicKey::new(new_key).expect("rotating to an invald key") };
+    let action = Action::SetKey {
+      chain_id: self.chain_id,
+      nonce,
+      key: PublicKey::new(new_key).expect("rotating to an invald key"),
+    };
     (action.clone(), action.eventuality())
   }
 
@@ -133,6 +138,7 @@ impl<D: Db> smart_contract_scheduler::SmartContract<Rpc<D>> for SmartContract {
         }
 
         res.push(Action::Batch {
+          chain_id: self.chain_id,
           nonce,
           coin: coin_to_ethereum_coin(coin),
           fee: U256::try_from(total_gas).unwrap() * fee_per_gas,

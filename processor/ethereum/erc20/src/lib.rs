@@ -13,6 +13,8 @@ use alloy_transport::{TransportErrorKind, RpcError};
 use alloy_simple_request_transport::SimpleRequest;
 use alloy_provider::{Provider, RootProvider};
 
+use ethereum_primitives::LogIndex;
+
 use tokio::task::JoinSet;
 
 #[rustfmt::skip]
@@ -31,9 +33,11 @@ pub use abi::IERC20::Transfer;
 #[derive(Clone, Debug)]
 pub struct TopLevelTransfer {
   /// The ID of the event for this transfer.
-  pub id: ([u8; 32], u64),
+  pub id: LogIndex,
+  /// The hash of the transaction which caused this transfer.
+  pub transaction_hash: [u8; 32],
   /// The address which made the transfer.
-  pub from: [u8; 20],
+  pub from: Address,
   /// The amount transferred.
   pub amount: U256,
   /// The data appended after the call itself.
@@ -52,12 +56,12 @@ impl Erc20 {
   /// Match a transaction for its top-level transfer to the specified address (if one exists).
   pub async fn match_top_level_transfer(
     provider: impl AsRef<RootProvider<SimpleRequest>>,
-    transaction_id: B256,
+    transaction_hash: B256,
     to: Address,
   ) -> Result<Option<TopLevelTransfer>, RpcError<TransportErrorKind>> {
     // Fetch the transaction
     let transaction =
-      provider.as_ref().get_transaction_by_hash(transaction_id).await?.ok_or_else(|| {
+      provider.as_ref().get_transaction_by_hash(transaction_hash).await?.ok_or_else(|| {
         TransportErrorKind::Custom(
           "node didn't have the transaction which emitted a log it had".to_string().into(),
         )
@@ -81,7 +85,7 @@ impl Erc20 {
 
       // Fetch the transaction's logs
       let receipt =
-        provider.as_ref().get_transaction_receipt(transaction_id).await?.ok_or_else(|| {
+        provider.as_ref().get_transaction_receipt(transaction_hash).await?.ok_or_else(|| {
           TransportErrorKind::Custom(
             "node didn't have receipt for a transaction we were matching for a top-level transfer"
               .to_string()
@@ -102,6 +106,9 @@ impl Erc20 {
           continue;
         }
 
+        let block_hash = log.block_hash.ok_or_else(|| {
+          TransportErrorKind::Custom("log didn't have its block hash set".to_string().into())
+        })?;
         let log_index = log.log_index.ok_or_else(|| {
           TransportErrorKind::Custom("log didn't have its index set".to_string().into())
         })?;
@@ -125,8 +132,9 @@ impl Erc20 {
         let data = transaction.inner.input().as_ref()[encoded.len() ..].to_vec();
 
         return Ok(Some(TopLevelTransfer {
-          id: (*transaction_id, log_index),
-          from: *log.from.0,
+          id: LogIndex { block_hash: *block_hash, index_within_block: log_index },
+          transaction_hash: *transaction_hash,
+          from: log.from,
           amount: log.value,
           data,
         }));
