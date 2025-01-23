@@ -9446,8 +9446,8 @@ dependencies = [
  "alloy-sol-macro",
  "alloy-sol-types",
  "alloy-transport",
+ "futures-util",
  "serai-processor-ethereum-primitives",
- "tokio",
 ]
 
 [[package]]
@@ -9480,6 +9480,7 @@ dependencies = [
  "borsh",
  "build-solidity-contracts",
  "ethereum-schnorr-contract",
+ "futures-util",
  "group",
  "k256",
  "rand_core",

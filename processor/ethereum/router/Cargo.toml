@@ -41,6 +41,8 @@ erc20 = { package = "serai-processor-ethereum-erc20", path = "../erc20", default
 
 serai-client = { path = "../../../substrate/client", default-features = false, features = ["ethereum"] }
 
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
 [build-dependencies]
 build-solidity-contracts = { path = "../../../networks/ethereum/build-contracts", default-features = false }
 

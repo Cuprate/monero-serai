@@ -32,6 +32,7 @@ impl primitives::BlockHeader for Epoch {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct FullEpoch {
   pub(crate) epoch: Epoch,
+  /// The unordered list of `InInstruction`s within this epoch
   pub(crate) instructions: Vec<EthereumInInstruction>,
   pub(crate) executed: Vec<Executed>,
 }

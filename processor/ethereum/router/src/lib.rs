@@ -2,7 +2,10 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 
-use std::{sync::Arc, collections::HashSet};
+use std::{
+  sync::Arc,
+  collections::{HashSet, HashMap},
+};
 
 use borsh::{BorshSerialize, BorshDeserialize};
 
@@ -21,12 +24,14 @@ use alloy_transport::{TransportErrorKind, RpcError};
 use alloy_simple_request_transport::SimpleRequest;
 use alloy_provider::{Provider, RootProvider};
 
+use serai_client::networks::ethereum::Address as SeraiAddress;
+
 use ethereum_primitives::LogIndex;
 use ethereum_schnorr::{PublicKey, Signature};
 use ethereum_deployer::Deployer;
 use erc20::{Transfer, Erc20};
 
-use serai_client::networks::ethereum::Address as SeraiAddress;
+use futures_util::stream::{StreamExt, FuturesUnordered};
 
 #[rustfmt::skip]
 #[expect(warnings)]
@@ -397,31 +402,43 @@ impl Router {
   }
 
   /// Fetch the `InInstruction`s emitted by the Router from this block.
-  pub async fn in_instructions(
+  ///
+  /// This is not guaranteed to return them in any order.
+  pub async fn in_instructions_unordered(
     &self,
-    block: u64,
+    from_block: u64,
+    to_block: u64,
     allowed_tokens: &HashSet<Address>,
   ) -> Result<Vec<InInstruction>, RpcError<TransportErrorKind>> {
     // The InInstruction events for this block
-    let filter = Filter::new().from_block(block).to_block(block).address(self.address);
-    let filter = filter.event_signature(InInstructionEvent::SIGNATURE_HASH);
-    let mut logs = self.provider.get_logs(&filter).await?;
-    logs.sort_by_key(|log| (log.block_number, log.log_index));
+    let logs = {
+      let filter = Filter::new().from_block(from_block).to_block(to_block).address(self.address);
+      let filter = filter.event_signature(InInstructionEvent::SIGNATURE_HASH);
+      self.provider.get_logs(&filter).await?
+    };
 
+    let mut in_instructions = Vec::with_capacity(logs.len());
     /*
       We check that for all InInstructions for ERC20s emitted, a corresponding transfer occurred.
-      In order to prevent a transfer from being used to justify multiple distinct InInstructions,
-      we insert the transfer's log index into this HashSet.
-    */
-    let mut transfer_check = HashSet::new();
+      On this initial loop, we just queue the ERC20 InInstructions for later verification.
 
-    let mut in_instructions = vec![];
+      We don't do this for ETH as it'd require tracing the transaction, which is non-trivial. It
+      also isn't necessary as all of this is solely defense in depth.
+    */
+    let mut erc20s = HashSet::new();
+    let mut erc20_transfer_logs = FuturesUnordered::new();
+    let mut erc20_transactions = HashSet::new();
+    let mut erc20_in_instructions = vec![];
     for log in logs {
       // Double check the address which emitted this log
       if log.address() != self.address {
         Err(TransportErrorKind::Custom(
           "node returned a log from a different address than requested".to_string().into(),
         ))?;
+      }
+      // Double check this is a InInstruction log
+      if log.topics().first() != Some(&InInstructionEvent::SIGNATURE_HASH) {
+        continue;
       }
 
       let id = LogIndex {
@@ -439,6 +456,7 @@ impl Router {
       let transaction_hash = log.transaction_hash.ok_or_else(|| {
         TransportErrorKind::Custom("log didn't have its transaction hash set".to_string().into())
       })?;
+      let transaction_hash = *transaction_hash;
 
       let log = log
         .log_decode::<InInstructionEvent>()
@@ -451,82 +469,148 @@ impl Router {
         .data;
 
       let coin = Coin::from(log.coin);
-      if let Coin::Erc20(token) = coin {
-        if !allowed_tokens.contains(&token) {
-          continue;
-        }
 
-        // Get all logs for this TX
-        let receipt =
-          self.provider.get_transaction_receipt(transaction_hash).await?.ok_or_else(|| {
-            TransportErrorKind::Custom(
-              "node didn't have the receipt for a transaction it had".to_string().into(),
-            )
-          })?;
-        let tx_logs = receipt.inner.logs();
-
-        /*
-          The transfer which causes an InInstruction event won't be a top-level transfer.
-          Accordingly, when looking for the matching transfer, disregard the top-level transfer (if
-          one exists).
-        */
-        if let Some(matched) =
-          Erc20::match_top_level_transfer(&self.provider, transaction_hash, self.address).await?
-        {
-          // Mark this log index as used so it isn't used again
-          transfer_check.insert(matched.id.index_within_block);
-        }
-
-        // Find a matching transfer log
-        let mut found_transfer = false;
-        for tx_log in tx_logs {
-          let log_index = tx_log.log_index.ok_or_else(|| {
-            TransportErrorKind::Custom(
-              "log in transaction receipt didn't have its log index set".to_string().into(),
-            )
-          })?;
-
-          // Ensure we didn't already use this transfer to check a distinct InInstruction event
-          if transfer_check.contains(&log_index) {
-            continue;
-          }
-
-          // Check if this log is from the token we expected to be transferred
-          if tx_log.address() != token {
-            continue;
-          }
-          // Check if this is a transfer log
-          // https://github.com/alloy-rs/core/issues/589
-          if tx_log.topics().first() != Some(&Transfer::SIGNATURE_HASH) {
-            continue;
-          }
-          let Ok(transfer) = Transfer::decode_log(&tx_log.inner.clone(), true) else { continue };
-          // Check if this is a transfer to us for the expected amount
-          if (transfer.to == self.address) && (transfer.value == log.amount) {
-            transfer_check.insert(log_index);
-            found_transfer = true;
-            break;
-          }
-        }
-        if !found_transfer {
-          // This shouldn't be a simple error
-          // This is an exploit, a non-conforming ERC20, or a malicious connection
-          // This should halt the process. While this is sufficient, it's sub-optimal
-          // TODO
-          Err(TransportErrorKind::Custom(
-            "ERC20 InInstruction with no matching transfer log".to_string().into(),
-          ))?;
-        }
-      };
-
-      in_instructions.push(InInstruction {
+      let in_instruction = InInstruction {
         id,
-        transaction_hash: *transaction_hash,
+        transaction_hash,
         from: log.from,
         coin,
         amount: log.amount,
         data: log.instruction.as_ref().to_vec(),
-      });
+      };
+
+      match coin {
+        Coin::Ether => in_instructions.push(in_instruction),
+        Coin::Erc20(token) => {
+          if !allowed_tokens.contains(&token) {
+            continue;
+          }
+
+          // Fetch the ERC20 transfer events necessary to verify this InInstruction has a matching
+          // transfer
+          if !erc20s.contains(&token) {
+            erc20s.insert(token);
+            erc20_transfer_logs.push(async move {
+              let filter = Erc20::transfer_filter(from_block, to_block, token, self.address);
+              self.provider.get_logs(&filter).await.map(|logs| (token, logs))
+            });
+          }
+          erc20_transactions.insert(transaction_hash);
+          erc20_in_instructions.push((transaction_hash, in_instruction))
+        }
+      }
+    }
+
+    // Collect the ERC20 transfer logs
+    let erc20_transfer_logs = {
+      let mut collected = HashMap::with_capacity(erc20s.len());
+      while let Some(token_and_logs) = erc20_transfer_logs.next().await {
+        let (token, logs) = token_and_logs?;
+        collected.insert(token, logs);
+      }
+      collected
+    };
+
+    /*
+      For each transaction, it may have a top-level ERC20 transfer. That top-level transfer won't
+      be the transfer caused by the call to `inInstruction`, so we shouldn't consider it
+      justification for this `InInstruction` event.
+
+      Fetch all top-level transfers here so we can ignore them.
+    */
+    let mut erc20_top_level_transfers = FuturesUnordered::new();
+    let mut transaction_transfer_logs = HashMap::new();
+    for transaction in erc20_transactions {
+      // Filter to the logs for this specific transaction
+      let logs = erc20_transfer_logs
+        .values()
+        .flat_map(|logs_per_token| logs_per_token.iter())
+        .filter_map(|log| {
+          let log_transaction_hash = log.transaction_hash.ok_or_else(|| {
+            TransportErrorKind::Custom(
+              "log didn't have its transaction hash set".to_string().into(),
+            )
+          });
+          match log_transaction_hash {
+            Ok(log_transaction_hash) => {
+              if log_transaction_hash == transaction {
+                Some(Ok(log))
+              } else {
+                None
+              }
+            }
+            Err(e) => Some(Err(e)),
+          }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+      // Find the top-level transfer
+      erc20_top_level_transfers.push(Erc20::top_level_transfer(
+        &self.provider,
+        transaction,
+        logs.clone(),
+      ));
+      // Keep the transaction-indexed logs for the actual justifying
+      transaction_transfer_logs.insert(transaction, logs);
+    }
+
+    /*
+      In order to prevent a single transfer from being used to justify multiple distinct
+      InInstructions, we insert the transfer's log index into this HashSet.
+    */
+    let mut already_used_to_justify = HashSet::new();
+
+    // Collect the top-level transfers
+    while let Some(erc20_top_level_transfer) = erc20_top_level_transfers.next().await {
+      let erc20_top_level_transfer = erc20_top_level_transfer?;
+      // If this transaction had a top-level transfer...
+      if let Some(erc20_top_level_transfer) = erc20_top_level_transfer {
+        // Mark this log index as used so it isn't used again
+        already_used_to_justify.insert(erc20_top_level_transfer.id.index_within_block);
+      }
+    }
+
+    // Now, for each ERC20 InInstruction, find a justifying transfer log
+    for (transaction_hash, in_instruction) in erc20_in_instructions {
+      let mut justified = false;
+      for log in &transaction_transfer_logs[&transaction_hash] {
+        let log_index = log.log_index.ok_or_else(|| {
+          TransportErrorKind::Custom(
+            "log in transaction receipt didn't have its log index set".to_string().into(),
+          )
+        })?;
+
+        // Ensure we didn't already use this transfer to check a distinct InInstruction event
+        if already_used_to_justify.contains(&log_index) {
+          continue;
+        }
+
+        // Check if this log is from the token we expected to be transferred
+        if log.address() != Address::from(in_instruction.coin) {
+          continue;
+        }
+        // Check if this is a transfer log
+        if log.topics().first() != Some(&Transfer::SIGNATURE_HASH) {
+          continue;
+        }
+        let Ok(transfer) = Transfer::decode_log(&log.inner.clone(), true) else { continue };
+        // Check if this aligns with the InInstruction
+        if (transfer.from == in_instruction.from) &&
+          (transfer.to == self.address) &&
+          (transfer.value == in_instruction.amount)
+        {
+          already_used_to_justify.insert(log_index);
+          justified = true;
+          break;
+        }
+      }
+      if !justified {
+        // This is an exploit, a non-conforming ERC20, or an invalid connection
+        Err(TransportErrorKind::Custom(
+          "ERC20 InInstruction with no matching transfer log".to_string().into(),
+        ))?;
+      }
+      in_instructions.push(in_instruction);
     }
 
     Ok(in_instructions)

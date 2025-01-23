@@ -162,12 +162,14 @@ impl<D: Db> ScannerFeed for Rpc<D> {
         router: Router,
         block: Header,
       ) -> Result<(Vec<EthereumInInstruction>, Vec<Executed>), RpcError<TransportErrorKind>> {
-        let mut instructions = router.in_instructions(block.number, &HashSet::from(TOKENS)).await?;
+        let mut instructions = router
+          .in_instructions_unordered(block.number, block.number, &HashSet::from(TOKENS))
+          .await?;
 
         for token in TOKENS {
           for TopLevelTransfer { id, transaction_hash, from, amount, data } in
-            Erc20::new(provider.clone(), **token)
-              .top_level_transfers(block.number, router.address())
+            Erc20::new(provider.clone(), token)
+              .top_level_transfers_unordered(block.number, block.number, router.address())
               .await?
           {
             instructions.push(EthereumInInstruction {

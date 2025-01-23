@@ -29,5 +29,4 @@ alloy-provider = { version = "0.9", default-features = false }
 
 ethereum-primitives = { package = "serai-processor-ethereum-primitives", path = "../primitives", default-features = false }
 
-# TODO futures-util = { version = "0.3", default-features = false, features = ["std"] }
-tokio = { version = "1", default-features = false, features = ["rt"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
