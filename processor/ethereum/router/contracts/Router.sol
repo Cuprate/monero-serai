@@ -25,13 +25,12 @@ import "IRouter.sol";
 /// @author Luke Parker <lukeparker@serai.exchange>
 /// @notice Intakes coins for the Serai network and handles relaying batches of transfers out
 contract Router is IRouterWithoutCollisions {
+  /// @dev The code hash for a non-empty account without code
+  bytes32 constant ACCOUNT_WITHOUT_CODE_CODEHASH = keccak256("");
+
   /// @dev The address in transient storage used for the reentrancy guard
-  bytes32 constant EXECUTE_REENTRANCY_GUARD_SLOT = bytes32(
-    /*
-      keccak256("ReentrancyGuard Router.execute") - 1
-    */
-    0xcf124a063de1614fedbd6b47187f98bf8873a1ae83da5c179a5881162f5b2401
-  );
+  bytes32 constant EXECUTE_REENTRANCY_GUARD_SLOT =
+    bytes32(uint256(keccak256("ReentrancyGuard Router.execute")) - 1);
 
   /**
    * @dev The next nonce used to determine the address of contracts deployed with CREATE. This is
@@ -509,11 +508,11 @@ contract Router is IRouterWithoutCollisions {
     }
 
     /*
-      Emit execution with the status of all included events.
+      Emit batch execution with the status of all included events.
 
       This is an effect after interactions yet we have a reentrancy guard making this safe.
     */
-    emit Executed(nonceUsed, message, results);
+    emit Batch(nonceUsed, message, results);
 
     // Transfer the fee to the relayer
     transferOut(msg.sender, coin, fee);
@@ -529,13 +528,31 @@ contract Router is IRouterWithoutCollisions {
   // @param escapeTo The address to escape to
   function escapeHatchDCDD91CC() external {
     // Verify the signature
-    (, bytes memory args,) = verifySignature(_seraiKey);
+    (uint256 nonceUsed, bytes memory args,) = verifySignature(_seraiKey);
 
     (,, address escapeTo) = abi.decode(args, (bytes32, bytes32, address));
 
     if (escapeTo == address(0)) {
       revert InvalidEscapeAddress();
     }
+
+    /*
+      We could define the escape hatch as having its own confirmation flow, as new keys do, but new
+      contracts don't face all of the cryptographic concerns faced by new keys. New contracts also
+      would presumably be moved to after strict review, making the chance of specifying the wrong
+      contract incredibly unlikely.
+
+      The only check performed accordingly (with no confirmation flow) is that the new contract is
+      in fact a contract. This is done to confirm the contract was successfully deployed on this
+      blockchain.
+    */
+    {
+      bytes32 codehash = escapeTo.codehash;
+      if ((codehash == bytes32(0)) || (codehash == ACCOUNT_WITHOUT_CODE_CODEHASH)) {
+        revert InvalidEscapeAddress();
+      }
+    }
+
     /*
       We want to define the escape hatch so coins here now, and latently received, can be forwarded.
       If the last Serai key set could update the escape hatch, they could siphon off latently
@@ -546,7 +563,7 @@ contract Router is IRouterWithoutCollisions {
     }
 
     _escapedTo = escapeTo;
-    emit EscapeHatch(escapeTo);
+    emit EscapeHatch(nonceUsed, escapeTo);
   }
 
   /// @notice Escape coins after the escape hatch has been invoked

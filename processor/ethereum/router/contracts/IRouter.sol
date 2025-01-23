@@ -34,11 +34,11 @@ interface IRouterWithoutCollisions {
    *   An `OutInstruction` is considered as having succeeded if the call transferring ETH doesn't
    *   fail, the ERC20 transfer doesn't fail, and any executed code doesn't revert.
    */
-  event Executed(uint256 indexed nonce, bytes32 indexed messageHash, bytes results);
+  event Batch(uint256 indexed nonce, bytes32 indexed messageHash, bytes results);
 
   /// @notice Emitted when `escapeHatch` is invoked
   /// @param escapeTo The address to escape to
-  event EscapeHatch(address indexed escapeTo);
+  event EscapeHatch(uint256 indexed nonce, address indexed escapeTo);
 
   /// @notice Emitted when coins escape through the escape hatch
   /// @param coin The coin which escaped
@@ -122,7 +122,10 @@ interface IRouter is IRouterWithoutCollisions {
   }
 
   /// @title The type of destination
-  /// @dev A destination is either an address or a blob of code to deploy and call
+  /**
+   * @dev A destination is either an ABI-encoded address or an ABI-encoded `CodeDestination`
+   *   containing code to deploy (invoking its constructor).
+   */
   enum DestinationType {
     Address,
     Code
