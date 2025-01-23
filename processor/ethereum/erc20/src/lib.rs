@@ -28,7 +28,14 @@ mod abi {
   alloy_sol_macro::sol!("contracts/IERC20.sol");
 }
 use abi::IERC20::{IERC20Calls, transferCall, transferFromCall};
+use abi::SeraiIERC20::{
+  SeraiIERC20Calls, transferWithInInstruction01BB244A8ACall as transferWithInInstructionCall,
+  transferFromWithInInstruction00081948E0Call as transferFromWithInInstructionCall,
+};
 pub use abi::IERC20::Transfer;
+
+#[cfg(test)]
+mod tests;
 
 /// A top-level ERC20 transfer
 ///
@@ -139,8 +146,18 @@ impl Erc20 {
       }
 
       // Read the data appended after
-      let encoded = call.abi_encode();
-      let data = transaction.inner.input().as_ref()[encoded.len() ..].to_vec();
+      let data = if let Ok(call) = SeraiIERC20Calls::abi_decode(transaction.inner.input(), true) {
+        match call {
+          SeraiIERC20Calls::transferWithInInstruction01BB244A8A(
+            transferWithInInstructionCall { inInstruction, .. },
+          ) |
+          SeraiIERC20Calls::transferFromWithInInstruction00081948E0(
+            transferFromWithInInstructionCall { inInstruction, .. },
+          ) => Vec::from(inInstruction),
+        }
+      } else {
+        vec![]
+      };
 
       return Ok(Some(TopLevelTransfer {
         id: LogIndex { block_hash: *block_hash, index_within_block: log_index },

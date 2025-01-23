@@ -29,8 +29,7 @@ contract Router is IRouterWithoutCollisions {
   bytes32 constant ACCOUNT_WITHOUT_CODE_CODEHASH = keccak256("");
 
   /// @dev The address in transient storage used for the reentrancy guard
-  bytes32 constant REENTRANCY_GUARD_SLOT =
-    bytes32(uint256(keccak256("ReentrancyGuard Router")) - 1);
+  bytes32 constant REENTRANCY_GUARD_SLOT = bytes32(uint256(keccak256("ReentrancyGuard Router")) - 1);
 
   /**
    * @dev The next nonce used to determine the address of contracts deployed with CREATE. This is
