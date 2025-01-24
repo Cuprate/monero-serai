@@ -376,14 +376,13 @@ contract Router is IRouterWithoutCollisions {
    */
   function transferOut(address to, address coin, uint256 amount) private returns (bool success) {
     if (coin == address(0)) {
-      // Enough gas to service the transfer and a minimal amount of logic
-      uint256 _gas = 5_000;
       // This uses assembly to prevent return bombs
       // slither-disable-next-line assembly
       assembly {
         success :=
           call(
-            _gas,
+            // explicit gas
+            0,
             to,
             amount,
             // calldata
@@ -512,7 +511,7 @@ contract Router is IRouterWithoutCollisions {
       }
 
       if (success) {
-        results[i / 8] |= bytes1(uint8(1 << (7 - (i % 8))));
+        results[i / 8] |= bytes1(uint8(1 << (i % 8)));
       }
     }
 
@@ -521,7 +520,7 @@ contract Router is IRouterWithoutCollisions {
 
       This is an effect after interactions yet we have a reentrancy guard making this safe.
     */
-    emit Batch(nonceUsed, message, results);
+    emit Batch(nonceUsed, message, outs.length, results);
 
     // Transfer the fee to the relayer
     transferOut(msg.sender, coin, fee);

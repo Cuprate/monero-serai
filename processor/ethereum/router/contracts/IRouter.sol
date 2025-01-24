@@ -27,14 +27,17 @@ interface IRouterWithoutCollisions {
   /// @notice Emitted when a batch of `OutInstruction`s occurs
   /// @param nonce The nonce consumed to execute this batch of transactions
   /// @param messageHash The hash of the message signed for the executed batch
+  /// @param resultsLength The length of the results bitvec (represented as bytes)
   /**
-   * @param results The result of each `OutInstruction` executed. This is a bitmask with true
-   *   representing success and false representing failure. The high bit (1 << 7) in the first byte
-   *   is used for the first `OutInstruction`, before the next bit, and so on, before the next byte.
-   *   An `OutInstruction` is considered as having succeeded if the call transferring ETH doesn't
-   *   fail, the ERC20 transfer doesn't fail, and any executed code doesn't revert.
+   * @param results The result of each `OutInstruction` executed. This is a bitvec with true
+   *   representing success and false representing failure. The low bit in the first byte is used
+   *   for the first `OutInstruction`, before the next bit, and so on, before the next byte. An
+   *   `OutInstruction` is considered as having succeeded if the call transferring ETH doesn't fail,
+   *   the ERC20 transfer doesn't fail, and any executed code doesn't revert.
    */
-  event Batch(uint256 indexed nonce, bytes32 indexed messageHash, bytes results);
+  event Batch(
+    uint256 indexed nonce, bytes32 indexed messageHash, uint256 resultsLength, bytes results
+  );
 
   /// @notice Emitted when `escapeHatch` is invoked
   /// @param escapeTo The address to escape to
