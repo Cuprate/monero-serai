@@ -68,14 +68,6 @@ use abi::{
 #[cfg(test)]
 mod tests;
 
-// As per Dencun, used for estimating gas for determining relayer fees
-const NON_ZERO_BYTE_GAS_COST: u64 = 16;
-const MEMORY_EXPANSION_COST: u64 = 3; // Does not model the quadratic cost
-const COLD_COST: u64 = 2_600;
-const WARM_COST: u64 = 100;
-const POSITIVE_VALUE_COST: u64 = 9_000;
-const EMPTY_ACCOUNT_COST: u64 = 25_000;
-
 impl From<&Signature> for abi::Signature {
   fn from(signature: &Signature) -> Self {
     Self {
@@ -247,6 +239,7 @@ pub struct Router {
 }
 impl Router {
   // Gas allocated for ERC20 calls
+  #[cfg(test)]
   const GAS_FOR_ERC20_CALL: u64 = 100_000;
 
   /*
@@ -262,7 +255,12 @@ impl Router {
   */
   const CONFIRM_NEXT_SERAI_KEY_GAS: u64 = 57_736;
   const UPDATE_SERAI_KEY_GAS: u64 = 60_045;
-  const EXECUTE_BASE_GAS: u64 = 51_131;
+  const EXECUTE_ETH_BASE_GAS: u64 = 51_131;
+  const EXECUTE_ERC20_BASE_GAS: u64 = 149_831;
+  const EXECUTE_ETH_ADDRESS_OUT_INSTRUCTION_GAS: u64 = 41_453;
+  const EXECUTE_ETH_CODE_OUT_INSTRUCTION_GAS: u64 = 51_723;
+  const EXECUTE_ERC20_ADDRESS_OUT_INSTRUCTION_GAS: u64 = 0; // TODO
+  const EXECUTE_ERC20_CODE_OUT_INSTRUCTION_GAS: u64 = 0; // TODO
   const ESCAPE_HATCH_GAS: u64 = 61_238;
 
   /*
@@ -432,51 +430,39 @@ impl Router {
     coin: Coin,
     instruction: &abi::OutInstruction,
   ) -> u64 {
-    // The assigned cost for performing an additional iteration of the loop
-    const ITERATION_COST: u64 = 5_000;
-    // The additional cost for a `DestinationType.Code`, as an additional buffer for its complexity
-    const CODE_COST: u64 = 10_000;
+    // As per Dencun, used for estimating gas for determining relayer fees
+    const NON_ZERO_BYTE_GAS_COST: u64 = 16;
+    const MEMORY_EXPANSION_COST: u64 = 3; // Does not model the quadratic cost
 
     let size = u64::try_from(instruction.abi_encoded_size()).unwrap();
     let calldata_memory_cost =
-      (NON_ZERO_BYTE_GAS_COST * size) + (MEMORY_EXPANSION_COST * size.div_ceil(32));
+      (size * NON_ZERO_BYTE_GAS_COST) + (size.div_ceil(32) * MEMORY_EXPANSION_COST);
 
-    ITERATION_COST +
-      (match coin {
-        Coin::Ether => match instruction.destinationType {
-          // We assume we're tranferring a positive value to a cold, empty account
-          abi::DestinationType::Address => {
-            calldata_memory_cost + COLD_COST + POSITIVE_VALUE_COST + EMPTY_ACCOUNT_COST
-          }
-          abi::DestinationType::Code => {
-            // OutInstructions can't be encoded/decoded and doesn't have pub internals, enabling it
-            // to be correct by construction
-            let code = abi::CodeDestination::abi_decode(&instruction.destination, true).unwrap();
-            // This performs a call to self with the value, incurring the positive-value cost before
-            // CREATE's
+    match coin {
+      Coin::Ether => match instruction.destinationType {
+        // The calldata and memory cost is already part of this
+        abi::DestinationType::Address => Self::EXECUTE_ETH_ADDRESS_OUT_INSTRUCTION_GAS,
+        abi::DestinationType::Code => {
+          // OutInstructions can't be encoded/decoded and doesn't have pub internals, enabling it
+          // to be correct by construction
+          let code = abi::CodeDestination::abi_decode(&instruction.destination, true).unwrap();
+          Self::EXECUTE_ETH_CODE_OUT_INSTRUCTION_GAS +
             calldata_memory_cost +
-              CODE_COST +
-              (WARM_COST + POSITIVE_VALUE_COST + u64::from(code.gasLimit))
-          }
-          abi::DestinationType::__Invalid => unreachable!(),
-        },
-        Coin::Erc20(_) => {
-          // The ERC20 is warmed by the fee payment to the relayer
-          let erc20_call_gas = WARM_COST + Self::GAS_FOR_ERC20_CALL;
-          match instruction.destinationType {
-            abi::DestinationType::Address => calldata_memory_cost + erc20_call_gas,
-            abi::DestinationType::Code => {
-              let code = abi::CodeDestination::abi_decode(&instruction.destination, true).unwrap();
-              calldata_memory_cost +
-                CODE_COST +
-                erc20_call_gas +
-                // Call to self to deploy the contract
-                (WARM_COST + u64::from(code.gasLimit))
-            }
-            abi::DestinationType::__Invalid => unreachable!(),
-          }
+            u64::from(code.gasLimit)
         }
-      })
+        abi::DestinationType::__Invalid => unreachable!(),
+      },
+      Coin::Erc20(_) => match instruction.destinationType {
+        abi::DestinationType::Address => Self::EXECUTE_ERC20_ADDRESS_OUT_INSTRUCTION_GAS,
+        abi::DestinationType::Code => {
+          let code = abi::CodeDestination::abi_decode(&instruction.destination, true).unwrap();
+          Self::EXECUTE_ERC20_CODE_OUT_INSTRUCTION_GAS +
+            calldata_memory_cost +
+            u64::from(code.gasLimit)
+        }
+        abi::DestinationType::__Invalid => unreachable!(),
+      },
+    }
   }
 
   /// The estimated gas cost for this OutInstruction.
@@ -495,18 +481,16 @@ impl Router {
   /// This is not guaranteed to be correct or even sufficient. It is a hint and a hint alone used
   /// for determining relayer fees.
   pub fn execute_gas_estimate(coin: Coin, outs: &OutInstructions) -> u64 {
-    Self::EXECUTE_BASE_GAS +
-      (match coin {
-        // This is warm as it's the message sender who is called with the fee payment
-        Coin::Ether => WARM_COST + POSITIVE_VALUE_COST,
-        // This is cold as we say the fee payment is the one warming the ERC20
-        Coin::Erc20(_) => COLD_COST + Self::GAS_FOR_ERC20_CALL,
-      }) +
-      outs
-        .0
-        .iter()
-        .map(|out| Self::execute_out_instruction_gas_estimate_internal(coin, out))
-        .sum::<u64>()
+    (match coin {
+      // This is warm as it's the message sender who is called with the fee payment
+      Coin::Ether => Self::EXECUTE_ETH_BASE_GAS,
+      // This is cold as we say the fee payment is the one warming the ERC20
+      Coin::Erc20(_) => Self::EXECUTE_ERC20_BASE_GAS,
+    }) + outs
+      .0
+      .iter()
+      .map(|out| Self::execute_out_instruction_gas_estimate_internal(coin, out))
+      .sum::<u64>()
   }
 
   /// Construct a transaction to execute a batch of `OutInstruction`s.
