@@ -45,6 +45,8 @@ interface IRouterWithoutCollisions {
   /// @param amount The amount which escaped
   event Escaped(address indexed coin, uint256 amount);
 
+  /// @notice The Serai key verifying the signature wasn't set
+  error SeraiKeyWasNone();
   /// @notice The key for Serai was invalid
   /// @dev This is incomplete and not always guaranteed to be thrown upon an invalid key
   error InvalidSeraiKey();

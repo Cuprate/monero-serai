@@ -137,7 +137,7 @@ contract Router is IRouterWithoutCollisions {
       The Schnorr contract should already reject this public key yet it's best to be explicit.
     */
     if (key == bytes32(0)) {
-      revert InvalidSignature();
+      revert SeraiKeyWasNone();
     }
 
     message = msg.data;
@@ -266,7 +266,7 @@ contract Router is IRouterWithoutCollisions {
   function inInstruction(address coin, uint256 amount, bytes memory instruction) external payable {
     // Check there is an active key
     if (_seraiKey == bytes32(0)) {
-      revert InvalidSeraiKey();
+      revert SeraiKeyWasNone();
     }
 
     // Don't allow further InInstructions once the escape hatch has been invoked

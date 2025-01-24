@@ -367,8 +367,44 @@ async fn test_constructor() {
 #[tokio::test]
 async fn test_confirm_next_serai_key() {
   let mut test = Test::new().await;
-  // TODO: Check all calls fail at this time, including inInstruction
   test.confirm_next_serai_key().await;
+}
+
+#[tokio::test]
+async fn test_no_serai_key() {
+  // Before we confirm a key, any operations requiring a signature shouldn't work
+  {
+    let mut test = Test::new().await;
+
+    // Corrupt the test's state so we can obtain signed TXs
+    test.state.key = Some(test_key());
+
+    assert!(matches!(
+      test.call_and_decode_err(test.update_serai_key_tx().1).await,
+      IRouterErrors::SeraiKeyWasNone(IRouter::SeraiKeyWasNone {})
+    ));
+    /* TODO
+    assert!(matches!(
+      test.call_and_decode_err(test.execute_tx()).await,
+      IRouterErrors::SeraiKeyWasNone(IRouter::SeraiKeyWasNone {})
+    ));
+    */
+    assert!(matches!(
+      test.call_and_decode_err(test.escape_hatch_tx(Address::ZERO)).await,
+      IRouterErrors::SeraiKeyWasNone(IRouter::SeraiKeyWasNone {})
+    ));
+  }
+
+  // And if there's no key to confirm, any operations requiring a signature shouldn't work
+  {
+    let mut test = Test::new().await;
+    test.confirm_next_serai_key().await;
+    test.state.next_key = Some(test_key());
+    assert!(matches!(
+      test.call_and_decode_err(test.confirm_next_serai_key_tx()).await,
+      IRouterErrors::SeraiKeyWasNone(IRouter::SeraiKeyWasNone {})
+    ));
+  }
 }
 
 #[tokio::test]
@@ -421,7 +457,7 @@ async fn test_no_in_instruction_before_key() {
   let (_coin, _amount, _shorthand, tx) = test.eth_in_instruction_tx();
   assert!(matches!(
     test.call_and_decode_err(tx).await,
-    IRouterErrors::InvalidSeraiKey(IRouter::InvalidSeraiKey {})
+    IRouterErrors::SeraiKeyWasNone(IRouter::SeraiKeyWasNone {})
   ));
 }
 
