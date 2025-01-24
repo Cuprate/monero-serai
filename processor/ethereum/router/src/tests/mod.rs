@@ -144,7 +144,7 @@ impl Test {
     // Confirm nonce 0 was used as such
     {
       let block = receipt.block_number.unwrap();
-      let executed = router.executed(block, block).await.unwrap();
+      let executed = router.executed(block ..= block).await.unwrap();
       assert_eq!(executed.len(), 1);
       assert_eq!(executed[0], Executed::NextSeraiKeySet { nonce: 0, key: public_key.eth_repr() });
     }
@@ -191,7 +191,7 @@ impl Test {
 
     {
       let block = receipt.block_number.unwrap();
-      let executed = self.router.executed(block, block).await.unwrap();
+      let executed = self.router.executed(block ..= block).await.unwrap();
       assert_eq!(executed.len(), 1);
       assert_eq!(
         executed[0],
@@ -236,7 +236,7 @@ impl Test {
 
     {
       let block = receipt.block_number.unwrap();
-      let executed = self.router.executed(block, block).await.unwrap();
+      let executed = self.router.executed(block ..= block).await.unwrap();
       assert_eq!(executed.len(), 1);
       assert_eq!(
         executed[0],
@@ -283,15 +283,14 @@ impl Test {
     if matches!(coin, Coin::Erc20(_)) {
       // If we don't whitelist this token, we shouldn't be yielded an InInstruction
       let in_instructions =
-        self.router.in_instructions_unordered(block, block, &HashSet::new()).await.unwrap();
+        self.router.in_instructions_unordered(block ..= block, &HashSet::new()).await.unwrap();
       assert!(in_instructions.is_empty());
     }
 
     let in_instructions = self
       .router
       .in_instructions_unordered(
-        block,
-        block,
+        block ..= block,
         &if let Coin::Erc20(token) = coin { HashSet::from([token]) } else { HashSet::new() },
       )
       .await
@@ -359,7 +358,7 @@ impl Test {
 
     {
       let block = receipt.block_number.unwrap();
-      let executed = self.router.executed(block, block).await.unwrap();
+      let executed = self.router.executed(block ..= block).await.unwrap();
       assert_eq!(executed.len(), 1);
       assert_eq!(executed[0], Executed::EscapeHatch { nonce: self.state.next_nonce, escape_to });
     }
@@ -707,7 +706,7 @@ async fn test_escape_hatch() {
 
     let block = receipt.block_number.unwrap();
     assert_eq!(
-      test.router.escapes(block, block).await.unwrap(),
+      test.router.escapes(block ..= block).await.unwrap(),
       vec![Escape { coin: Coin::Ether, amount: U256::from(1) }],
     );
 
@@ -730,7 +729,7 @@ async fn test_escape_hatch() {
     assert!(receipt.status());
 
     let block = receipt.block_number.unwrap();
-    assert_eq!(test.router.escapes(block, block).await.unwrap(), vec![Escape { coin, amount }],);
+    assert_eq!(test.router.escapes(block ..= block).await.unwrap(), vec![Escape { coin, amount }],);
     assert_eq!(erc20.balance_of(&test, test.router.address()).await, U256::from(0));
     assert_eq!(erc20.balance_of(&test, test.state.escaped_to.unwrap()).await, amount);
   }

@@ -160,10 +160,10 @@ impl<D: Db> ScannerFeed for Rpc<D> {
         block: Header,
       ) -> Result<(Vec<EthereumInInstruction>, Vec<Executed>), RpcError<TransportErrorKind>> {
         let instructions = router
-          .in_instructions_unordered(block.number, block.number, &HashSet::from(TOKENS))
+          .in_instructions_unordered(block.number ..= block.number, &HashSet::from(TOKENS))
           .await?;
 
-        let executed = router.executed(block.number, block.number).await?;
+        let executed = router.executed(block.number ..= block.number).await?;
 
         Ok((instructions, executed))
       }

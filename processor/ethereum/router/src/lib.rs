@@ -2,6 +2,7 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 
+use core::ops::RangeInclusive;
 use std::{
   sync::Arc,
   collections::{HashSet, HashMap},
@@ -459,13 +460,13 @@ impl Router {
   /// This is not guaranteed to return them in any order.
   pub async fn in_instructions_unordered(
     &self,
-    from_block: u64,
-    to_block: u64,
+    blocks: RangeInclusive<u64>,
     allowed_erc20s: &HashSet<Address>,
   ) -> Result<Vec<InInstruction>, RpcError<TransportErrorKind>> {
     // The InInstruction events for this block
     let in_instruction_logs = {
-      let filter = Filter::new().from_block(from_block).to_block(to_block).address(self.address);
+      // https://github.com/rust-lang/rust/issues/27186
+      let filter = Filter::new().select(blocks.clone()).address(self.address);
       let filter = filter.event_signature(InInstructionEvent::SIGNATURE_HASH);
       self.provider.get_logs(&filter).await?
     };
@@ -478,18 +479,15 @@ impl Router {
     let erc20_transfer_logs = {
       let mut transfers = FuturesUnordered::new();
       for erc20 in allowed_erc20s {
-        transfers.push(async move {
-          (
-            erc20,
-            Erc20::top_level_transfers_unordered(
-              &self.provider,
-              from_block,
-              to_block,
-              *erc20,
-              self.address,
-            )
-            .await,
-          )
+        transfers.push({
+          // https://github.com/rust-lang/rust/issues/27186
+          let blocks: RangeInclusive<u64> = blocks.clone();
+          async move {
+            let transfers =
+              Erc20::top_level_transfers_unordered(&self.provider, blocks, *erc20, self.address)
+                .await;
+            (erc20, transfers)
+          }
         });
       }
 
@@ -626,8 +624,7 @@ impl Router {
   /// Fetch the executed actions for the specified range of blocks.
   pub async fn executed(
     &self,
-    from_block: u64,
-    to_block: u64,
+    blocks: RangeInclusive<u64>,
   ) -> Result<Vec<Executed>, RpcError<TransportErrorKind>> {
     fn decode<E: SolEvent>(log: &Log) -> Result<E, RpcError<TransportErrorKind>> {
       Ok(
@@ -643,7 +640,7 @@ impl Router {
       )
     }
 
-    let filter = Filter::new().from_block(from_block).to_block(to_block).address(self.address);
+    let filter = Filter::new().select(blocks).address(self.address);
     let mut logs = self.provider.get_logs(&filter).await?;
     logs.sort_by_key(|log| (log.block_number, log.log_index));
 
@@ -707,10 +704,9 @@ impl Router {
   /// Fetch the `Escape`s from the smart contract through the escape hatch.
   pub async fn escapes(
     &self,
-    from_block: u64,
-    to_block: u64,
+    blocks: RangeInclusive<u64>,
   ) -> Result<Vec<Escape>, RpcError<TransportErrorKind>> {
-    let filter = Filter::new().from_block(from_block).to_block(to_block).address(self.address);
+    let filter = Filter::new().select(blocks).address(self.address);
     let mut logs =
       self.provider.get_logs(&filter.event_signature(EscapedEvent::SIGNATURE_HASH)).await?;
     logs.sort_by_key(|log| (log.block_number, log.log_index));

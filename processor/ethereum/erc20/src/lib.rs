@@ -2,6 +2,7 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 
+use core::ops::RangeInclusive;
 use std::collections::HashMap;
 
 use alloy_core::primitives::{Address, U256};
@@ -76,8 +77,8 @@ pub struct TopLevelTransfers {
 pub struct Erc20;
 impl Erc20 {
   /// The filter for transfer logs of the specified ERC20, to the specified recipient.
-  fn transfer_filter(from_block: u64, to_block: u64, erc20: Address, to: Address) -> Filter {
-    let filter = Filter::new().from_block(from_block).to_block(to_block);
+  fn transfer_filter(blocks: RangeInclusive<u64>, erc20: Address, to: Address) -> Filter {
+    let filter = Filter::new().select(blocks);
     filter.address(erc20).event_signature(Transfer::SIGNATURE_HASH).topic2(to.into_word())
   }
 
@@ -180,14 +181,13 @@ impl Erc20 {
   /// The `transfers` in the result are unordered. The `logs` are sorted by index.
   pub async fn top_level_transfers_unordered(
     provider: &RootProvider<SimpleRequest>,
-    from_block: u64,
-    to_block: u64,
+    blocks: RangeInclusive<u64>,
     erc20: Address,
     to: Address,
   ) -> Result<TopLevelTransfers, RpcError<TransportErrorKind>> {
     let mut logs = {
       // Get all transfers within these blocks
-      let logs = provider.get_logs(&Self::transfer_filter(from_block, to_block, erc20, to)).await?;
+      let logs = provider.get_logs(&Self::transfer_filter(blocks, erc20, to)).await?;
 
       // The logs, indexed by their transactions
       let mut transaction_logs = HashMap::new();
