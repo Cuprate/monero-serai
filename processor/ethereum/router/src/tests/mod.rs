@@ -222,10 +222,16 @@ impl Test {
     let tx = ethereum_primitives::deterministically_sign(tx);
     let receipt = ethereum_test_primitives::publish_tx(&self.provider, tx.clone()).await;
     assert!(receipt.status());
-    assert_eq!(
-      CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used),
-      Router::UPDATE_SERAI_KEY_GAS,
-    );
+    if self.state.next_key.is_none() {
+      assert_eq!(
+        CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used),
+        Router::UPDATE_SERAI_KEY_GAS,
+      );
+    } else {
+      assert!(
+        CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used) < Router::UPDATE_SERAI_KEY_GAS
+      );
+    }
 
     {
       let block = receipt.block_number.unwrap();
@@ -371,8 +377,52 @@ async fn test_update_serai_key() {
   test.confirm_next_serai_key().await;
   test.update_serai_key().await;
 
+  // We should be able to update while an update is pending as well (in case the new key never
+  // confirms)
+  test.update_serai_key().await;
+
+  // But we shouldn't be able to update the key to None
+  {
+    let msg = crate::abi::updateSeraiKeyCall::new((
+      crate::abi::Signature {
+        c: test.chain_id.into(),
+        s: U256::try_from(test.state.next_nonce).unwrap().into(),
+      },
+      [0; 32].into(),
+    ))
+    .abi_encode();
+    let sig = sign(test.state.key.unwrap(), &msg);
+
+    assert!(matches!(
+      test
+        .call_and_decode_err(TxLegacy {
+          input: crate::abi::updateSeraiKeyCall::new((
+            crate::abi::Signature::from(&sig),
+            [0; 32].into(),
+          ))
+          .abi_encode()
+          .into(),
+          ..Default::default()
+        })
+        .await,
+      IRouterErrors::InvalidSeraiKey(IRouter::InvalidSeraiKey {})
+    ));
+  }
+
   // Once we update to a new key, we should, of course, be able to continue to rotate keys
   test.confirm_next_serai_key().await;
+}
+
+#[tokio::test]
+async fn test_no_in_instruction_before_key() {
+  let test = Test::new().await;
+
+  // We shouldn't be able to publish `InInstruction`s before publishing a key
+  let (_coin, _amount, _shorthand, tx) = test.eth_in_instruction_tx();
+  assert!(matches!(
+    test.call_and_decode_err(tx).await,
+    IRouterErrors::InvalidSeraiKey(IRouter::InvalidSeraiKey {})
+  ));
 }
 
 #[tokio::test]
@@ -589,9 +639,8 @@ async fn test_escape_hatch() {
   }
 }
 
-/*
+/* TODO
   event Batch(uint256 indexed nonce, bytes32 indexed messageHash, bytes results);
-  error InvalidSeraiKey();
   error InvalidSignature();
   error Reentered();
   error EscapeFailed();
