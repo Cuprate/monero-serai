@@ -11,10 +11,7 @@ use borsh::{BorshSerialize, BorshDeserialize};
 
 use group::ff::PrimeField;
 
-use alloy_core::primitives::{
-  hex::{self, FromHex},
-  Address, U256, Bytes, TxKind,
-};
+use alloy_core::primitives::{hex, Address, U256, TxKind};
 use alloy_sol_types::{SolValue, SolConstructor, SolCall, SolEvent};
 
 use alloy_consensus::TxLegacy;
@@ -257,9 +254,18 @@ impl Router {
   const ESCAPE_HATCH_GAS: u64 = 61_238;
 
   fn code() -> Vec<u8> {
-    const BYTECODE: &[u8] =
-      include_bytes!(concat!(env!("OUT_DIR"), "/serai-processor-ethereum-router/Router.bin"));
-    Bytes::from_hex(BYTECODE).expect("compiled-in Router bytecode wasn't valid hex").to_vec()
+    const BYTECODE: &[u8] = {
+      const BYTECODE_HEX: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/serai-processor-ethereum-router/Router.bin"));
+      const BYTECODE: [u8; BYTECODE_HEX.len() / 2] =
+        match hex::const_decode_to_array::<{ BYTECODE_HEX.len() / 2 }>(BYTECODE_HEX) {
+          Ok(bytecode) => bytecode,
+          Err(_) => panic!("Router.bin did not contain valid hex"),
+        };
+      &BYTECODE
+    };
+
+    BYTECODE.to_vec()
   }
 
   fn init_code(key: &PublicKey) -> Vec<u8> {

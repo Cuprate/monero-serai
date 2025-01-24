@@ -52,7 +52,7 @@ impl Deployer {
   /// funded for this transaction to be submitted. This account has no known private key to anyone
   /// so ETH sent can be neither misappropriated nor returned.
   pub fn deployment_tx() -> Signed<TxLegacy> {
-    let bytecode = Bytes::from(BYTECODE);
+    let bytecode = Bytes::from_static(BYTECODE);
 
     // Legacy transactions are used to ensure the widest possible degree of support across EVMs
     let tx = TxLegacy {

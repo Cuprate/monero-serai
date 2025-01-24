@@ -41,6 +41,9 @@ fn main() {
       "contracts/IRouter.sol",
       "contracts/Router.sol",
     ],
-    &(artifacts_path + "/router.rs"),
+    &(artifacts_path.clone() + "/router.rs"),
   );
+
+  // Build the test contracts
+  build_solidity_contracts::build(&[], "contracts/tests", &(artifacts_path + "/tests")).unwrap();
 }

@@ -38,6 +38,8 @@ use crate::{
 };
 
 mod constants;
+mod erc20;
+use erc20::Erc20;
 
 pub(crate) fn test_key() -> (Scalar, PublicKey) {
   loop {
@@ -241,13 +243,17 @@ impl Test {
     self.verify_state().await;
   }
 
+  fn in_instruction() -> Shorthand {
+    Shorthand::Raw(RefundableInInstruction {
+      origin: None,
+      instruction: SeraiInInstruction::Transfer(SeraiAddress([0xff; 32])),
+    })
+  }
+
   fn eth_in_instruction_tx(&self) -> (Coin, U256, Shorthand, TxLegacy) {
     let coin = Coin::Ether;
     let amount = U256::from(1);
-    let shorthand = Shorthand::Raw(RefundableInInstruction {
-      origin: None,
-      instruction: SeraiInInstruction::Transfer(SeraiAddress([0xff; 32])),
-    });
+    let shorthand = Self::in_instruction();
 
     let mut tx = self.router.in_instruction(coin, amount, &shorthand);
     tx.gas_limit = 1_000_000;
@@ -363,7 +369,74 @@ async fn test_eth_in_instruction() {
 
 #[tokio::test]
 async fn test_erc20_in_instruction() {
-  todo!("TODO")
+  let mut test = Test::new().await;
+  test.confirm_next_serai_key().await;
+
+  let erc20 = Erc20::deploy(&test).await;
+
+  let coin = Coin::Erc20(erc20.address());
+  let amount = U256::from(1);
+  let shorthand = Test::in_instruction();
+
+  // The provided `in_instruction` function will use a top-level transfer for ERC20 InInstructions,
+  // so we have to manually write this call
+  let tx = TxLegacy {
+    chain_id: None,
+    nonce: 0,
+    gas_price: 100_000_000_000u128,
+    gas_limit: 1_000_000,
+    to: test.router.address().into(),
+    value: U256::ZERO,
+    input: crate::abi::inInstructionCall::new((coin.into(), amount, shorthand.encode().into()))
+      .abi_encode()
+      .into(),
+  };
+
+  // If no `approve` was granted, this should fail
+  assert!(matches!(
+    test.call_and_decode_err(tx.clone()).await,
+    IRouterErrors::TransferFromFailed(IRouter::TransferFromFailed {})
+  ));
+
+  let tx = ethereum_primitives::deterministically_sign(tx);
+  {
+    let signer = tx.recover_signer().unwrap();
+    erc20.mint(&test, signer, amount).await;
+    erc20.approve(&test, signer, test.router.address(), amount).await;
+  }
+  let receipt = ethereum_test_primitives::publish_tx(&test.provider, tx.clone()).await;
+  assert!(receipt.status());
+
+  let block = receipt.block_number.unwrap();
+
+  // If we don't whitelist this token, we shouldn't be yielded an InInstruction
+  {
+    let in_instructions =
+      test.router.in_instructions_unordered(block, block, &HashSet::new()).await.unwrap();
+    assert!(in_instructions.is_empty());
+  }
+
+  let in_instructions = test
+    .router
+    .in_instructions_unordered(block, block, &HashSet::from([coin.into()]))
+    .await
+    .unwrap();
+  assert_eq!(in_instructions.len(), 1);
+  assert_eq!(
+    in_instructions[0],
+    InInstruction {
+      id: LogIndex {
+        block_hash: *receipt.block_hash.unwrap(),
+        // First is the Transfer log, then the InInstruction log
+        index_within_block: receipt.inner.logs()[1].log_index.unwrap(),
+      },
+      transaction_hash: **tx.hash(),
+      from: tx.recover_signer().unwrap(),
+      coin,
+      amount,
+      data: shorthand.encode(),
+    }
+  );
 }
 
 #[tokio::test]
