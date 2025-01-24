@@ -408,6 +408,47 @@ async fn test_no_serai_key() {
 }
 
 #[tokio::test]
+async fn test_invalid_signature() {
+  let mut test = Test::new().await;
+
+  {
+    let mut tx = test.confirm_next_serai_key_tx();
+    // Cut it down to the function signature
+    tx.input = tx.input.as_ref()[.. 4].to_vec().into();
+    assert!(matches!(
+      test.call_and_decode_err(tx).await,
+      IRouterErrors::InvalidSignature(IRouter::InvalidSignature {})
+    ));
+  }
+
+  {
+    let mut tx = test.confirm_next_serai_key_tx();
+    // Mutate the signature
+    let mut input = Vec::<u8>::from(tx.input);
+    *input.last_mut().unwrap() = input.last().unwrap().wrapping_add(1);
+    tx.input = input.into();
+    assert!(matches!(
+      test.call_and_decode_err(tx).await,
+      IRouterErrors::InvalidSignature(IRouter::InvalidSignature {})
+    ));
+  }
+
+  test.confirm_next_serai_key().await;
+
+  {
+    let mut tx = test.update_serai_key_tx().1;
+    // Mutate the message
+    let mut input = Vec::<u8>::from(tx.input);
+    *input.last_mut().unwrap() = input.last().unwrap().wrapping_add(1);
+    tx.input = input.into();
+    assert!(matches!(
+      test.call_and_decode_err(tx).await,
+      IRouterErrors::InvalidSignature(IRouter::InvalidSignature {})
+    ));
+  }
+}
+
+#[tokio::test]
 async fn test_update_serai_key() {
   let mut test = Test::new().await;
   test.confirm_next_serai_key().await;
@@ -677,7 +718,6 @@ async fn test_escape_hatch() {
 
 /* TODO
   event Batch(uint256 indexed nonce, bytes32 indexed messageHash, bytes results);
-  error InvalidSignature();
   error Reentered();
   error EscapeFailed();
   function executeArbitraryCode(bytes memory code) external payable;
