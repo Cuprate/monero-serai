@@ -1,8 +1,9 @@
 use alloy_core::primitives::{hex, Address, U256, Bytes, TxKind, PrimitiveSignature};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolValue, SolCall};
 
 use alloy_consensus::{TxLegacy, SignableTransaction, Signed};
 
+use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
 use alloy_provider::Provider;
 
 use ethereum_primitives::keccak256;
@@ -79,5 +80,12 @@ impl Erc20 {
     let tx = ethereum_primitives::deterministically_sign(tx);
     let receipt = ethereum_test_primitives::publish_tx(&test.provider, tx).await;
     assert!(receipt.status());
+  }
+
+  pub(crate) async fn balance_of(&self, test: &Test, account: Address) -> U256 {
+    let call = TransactionRequest::default().to(self.0).input(TransactionInput::new(
+      abi::TestERC20::balanceOfCall::new((account,)).abi_encode().into(),
+    ));
+    U256::abi_decode(&test.provider.call(&call).await.unwrap(), true).unwrap()
   }
 }

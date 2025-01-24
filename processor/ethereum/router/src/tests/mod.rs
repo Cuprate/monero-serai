@@ -546,24 +546,35 @@ async fn test_escape_hatch() {
       vec![Escape { coin: Coin::Ether, amount: U256::from(1) }],
     );
 
-    assert!(test.provider.get_balance(test.router.address()).await.unwrap() == U256::from(0));
-    assert!(
-      test.provider.get_balance(test.state.escaped_to.unwrap()).await.unwrap() == U256::from(1)
+    assert_eq!(test.provider.get_balance(test.router.address()).await.unwrap(), U256::from(0));
+    assert_eq!(
+      test.provider.get_balance(test.state.escaped_to.unwrap()).await.unwrap(),
+      U256::from(1)
     );
   }
 
-  // TODO ERC20 escape
+  // ERC20
+  {
+    let erc20 = Erc20::deploy(&test).await;
+    let coin = Coin::Erc20(erc20.address());
+    let amount = U256::from(1);
+    erc20.mint(&test, test.router.address(), amount).await;
+
+    let tx = ethereum_primitives::deterministically_sign(test.escape_tx(coin));
+    let receipt = ethereum_test_primitives::publish_tx(&test.provider, tx.clone()).await;
+    assert!(receipt.status());
+
+    let block = receipt.block_number.unwrap();
+    assert_eq!(test.router.escapes(block, block).await.unwrap(), vec![Escape { coin, amount }],);
+    assert_eq!(erc20.balance_of(&test, test.router.address()).await, U256::from(0));
+    assert_eq!(erc20.balance_of(&test, test.state.escaped_to.unwrap()).await, amount);
+  }
 }
 
 /*
-  event InInstruction(
-    address indexed from, address indexed coin, uint256 amount, bytes instruction
-  );
   event Batch(uint256 indexed nonce, bytes32 indexed messageHash, bytes results);
   error InvalidSeraiKey();
   error InvalidSignature();
-  error AmountMismatchesMsgValue();
-  error TransferFromFailed();
   error Reentered();
   error EscapeFailed();
   function executeArbitraryCode(bytes memory code) external payable;
@@ -590,61 +601,6 @@ async fn test_escape_hatch() {
     uint256 fee,
     OutInstruction[] calldata outs
   ) external;
-}
-
-#[tokio::test]
-async fn test_eth_in_instruction() {
-  let (_anvil, provider, router, key) = setup_test().await;
-  confirm_next_serai_key(&provider, &router, 1, key).await;
-
-  let amount = U256::try_from(OsRng.next_u64()).unwrap();
-  let mut in_instruction = vec![0; usize::try_from(OsRng.next_u64() % 256).unwrap()];
-  OsRng.fill_bytes(&mut in_instruction);
-
-  let tx = TxLegacy {
-    chain_id: None,
-    nonce: 0,
-    // 100 gwei
-    gas_price: 100_000_000_000,
-    gas_limit: 1_000_000,
-    to: TxKind::Call(router.address()),
-    value: amount,
-    input: crate::_irouter_abi::inInstructionCall::new((
-      [0; 20].into(),
-      amount,
-      in_instruction.clone().into(),
-    ))
-    .abi_encode()
-    .into(),
-  };
-  let tx = ethereum_primitives::deterministically_sign(tx);
-  let signer = tx.recover_signer().unwrap();
-
-  let receipt = ethereum_test_primitives::publish_tx(&provider, tx).await;
-  assert!(receipt.status());
-
-  assert_eq!(receipt.inner.logs().len(), 1);
-  let parsed_log =
-    receipt.inner.logs()[0].log_decode::<crate::InInstructionEvent>().unwrap().inner.data;
-  assert_eq!(parsed_log.from, signer);
-  assert_eq!(parsed_log.coin, Address::from([0; 20]));
-  assert_eq!(parsed_log.amount, amount);
-  assert_eq!(parsed_log.instruction.as_ref(), &in_instruction);
-
-  let parsed_in_instructions =
-    router.in_instructions(receipt.block_number.unwrap(), &HashSet::new()).await.unwrap();
-  assert_eq!(parsed_in_instructions.len(), 1);
-  assert_eq!(
-    parsed_in_instructions[0].id,
-    LogIndex {
-      block_hash: *receipt.block_hash.unwrap(),
-      index_within_block: receipt.inner.logs()[0].log_index.unwrap(),
-    },
-  );
-  assert_eq!(parsed_in_instructions[0].from, signer);
-  assert_eq!(parsed_in_instructions[0].coin, Coin::Ether);
-  assert_eq!(parsed_in_instructions[0].amount, amount);
-  assert_eq!(parsed_in_instructions[0].data, in_instruction);
 }
 
 async fn publish_outs(
