@@ -16,9 +16,7 @@ use serai_db::Db;
 use scanner::ScannerFeed;
 
 use ethereum_schnorr::PublicKey;
-use ethereum_erc20::{TopLevelTransfer, Erc20};
-#[rustfmt::skip]
-use ethereum_router::{Coin as EthereumCoin, InInstruction as EthereumInInstruction, Executed, Router};
+use ethereum_router::{InInstruction as EthereumInInstruction, Executed, Router};
 
 use crate::{
   TOKENS, ETHER_DUST, DAI_DUST, InitialSeraiKey,
@@ -158,30 +156,12 @@ impl<D: Db> ScannerFeed for Rpc<D> {
       };
 
       async fn sync_block(
-        provider: Arc<RootProvider<SimpleRequest>>,
         router: Router,
         block: Header,
       ) -> Result<(Vec<EthereumInInstruction>, Vec<Executed>), RpcError<TransportErrorKind>> {
-        let mut instructions = router
+        let instructions = router
           .in_instructions_unordered(block.number, block.number, &HashSet::from(TOKENS))
           .await?;
-
-        for token in TOKENS {
-          for TopLevelTransfer { id, transaction_hash, from, amount, data } in
-            Erc20::new(provider.clone(), token)
-              .top_level_transfers_unordered(block.number, block.number, router.address())
-              .await?
-          {
-            instructions.push(EthereumInInstruction {
-              id,
-              transaction_hash,
-              from,
-              coin: EthereumCoin::Erc20(token),
-              amount,
-              data,
-            });
-          }
-        }
 
         let executed = router.executed(block.number, block.number).await?;
 
@@ -214,7 +194,7 @@ impl<D: Db> ScannerFeed for Rpc<D> {
         to_check = *to_check_block.parent_hash;
 
         // Spawn a task to sync this block
-        join_set.spawn(sync_block(self.provider.clone(), router.clone(), to_check_block));
+        join_set.spawn(sync_block(router.clone(), to_check_block));
       }
 
       let mut instructions = vec![];

@@ -5,13 +5,12 @@ use rand_core::{RngCore, OsRng};
 use group::ff::Field;
 use k256::{Scalar, ProjectivePoint};
 
-use alloy_core::primitives::{Address, U256, TxKind};
-use alloy_sol_types::SolCall;
+use alloy_core::primitives::{Address, U256};
+use alloy_sol_types::{SolCall, SolEvent};
 
-use alloy_consensus::TxLegacy;
+use alloy_consensus::{TxLegacy, Signed};
 
-#[rustfmt::skip]
-use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionInput, TransactionRequest, TransactionReceipt};
+use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionInput, TransactionRequest};
 use alloy_simple_request_transport::SimpleRequest;
 use alloy_rpc_client::ClientBuilder;
 use alloy_provider::{Provider, RootProvider};
@@ -262,6 +261,56 @@ impl Test {
     (coin, amount, shorthand, tx)
   }
 
+  async fn publish_in_instruction_tx(
+    &self,
+    tx: Signed<TxLegacy>,
+    coin: Coin,
+    amount: U256,
+    shorthand: &Shorthand,
+  ) {
+    let receipt = ethereum_test_primitives::publish_tx(&self.provider, tx.clone()).await;
+    assert!(receipt.status());
+
+    let block = receipt.block_number.unwrap();
+
+    if matches!(coin, Coin::Erc20(_)) {
+      // If we don't whitelist this token, we shouldn't be yielded an InInstruction
+      let in_instructions =
+        self.router.in_instructions_unordered(block, block, &HashSet::new()).await.unwrap();
+      assert!(in_instructions.is_empty());
+    }
+
+    let in_instructions = self
+      .router
+      .in_instructions_unordered(
+        block,
+        block,
+        &if let Coin::Erc20(token) = coin { HashSet::from([token]) } else { HashSet::new() },
+      )
+      .await
+      .unwrap();
+    assert_eq!(in_instructions.len(), 1);
+
+    let in_instruction_log_index = receipt.inner.logs().iter().find_map(|log| {
+      (log.topics().first() == Some(&crate::InInstructionEvent::SIGNATURE_HASH))
+        .then(|| log.log_index.unwrap())
+    });
+    // If this isn't an InInstruction event, it'll be a top-level transfer event
+    let log_index = in_instruction_log_index.unwrap_or(0);
+
+    assert_eq!(
+      in_instructions[0],
+      InInstruction {
+        id: LogIndex { block_hash: *receipt.block_hash.unwrap(), index_within_block: log_index },
+        transaction_hash: **tx.hash(),
+        from: tx.recover_signer().unwrap(),
+        coin,
+        amount,
+        data: shorthand.encode(),
+      }
+    );
+  }
+
   fn escape_hatch_tx(&self, escape_to: Address) -> TxLegacy {
     let msg = Router::escape_hatch_message(self.chain_id, self.state.next_nonce, escape_to);
     let sig = sign(self.state.key.unwrap(), &msg);
@@ -344,31 +393,11 @@ async fn test_eth_in_instruction() {
   }
 
   let tx = ethereum_primitives::deterministically_sign(tx);
-  let receipt = ethereum_test_primitives::publish_tx(&test.provider, tx.clone()).await;
-  assert!(receipt.status());
-
-  let block = receipt.block_number.unwrap();
-  let in_instructions =
-    test.router.in_instructions_unordered(block, block, &HashSet::new()).await.unwrap();
-  assert_eq!(in_instructions.len(), 1);
-  assert_eq!(
-    in_instructions[0],
-    InInstruction {
-      id: LogIndex {
-        block_hash: *receipt.block_hash.unwrap(),
-        index_within_block: receipt.inner.logs()[0].log_index.unwrap(),
-      },
-      transaction_hash: **tx.hash(),
-      from: tx.recover_signer().unwrap(),
-      coin,
-      amount,
-      data: shorthand.encode(),
-    }
-  );
+  test.publish_in_instruction_tx(tx, coin, amount, &shorthand).await;
 }
 
 #[tokio::test]
-async fn test_erc20_in_instruction() {
+async fn test_erc20_router_in_instruction() {
   let mut test = Test::new().await;
   test.confirm_next_serai_key().await;
 
@@ -404,39 +433,28 @@ async fn test_erc20_in_instruction() {
     erc20.mint(&test, signer, amount).await;
     erc20.approve(&test, signer, test.router.address(), amount).await;
   }
-  let receipt = ethereum_test_primitives::publish_tx(&test.provider, tx.clone()).await;
-  assert!(receipt.status());
 
-  let block = receipt.block_number.unwrap();
+  test.publish_in_instruction_tx(tx, coin, amount, &shorthand).await;
+}
 
-  // If we don't whitelist this token, we shouldn't be yielded an InInstruction
-  {
-    let in_instructions =
-      test.router.in_instructions_unordered(block, block, &HashSet::new()).await.unwrap();
-    assert!(in_instructions.is_empty());
-  }
+#[tokio::test]
+async fn test_erc20_top_level_transfer_in_instruction() {
+  let mut test = Test::new().await;
+  test.confirm_next_serai_key().await;
 
-  let in_instructions = test
-    .router
-    .in_instructions_unordered(block, block, &HashSet::from([coin.into()]))
-    .await
-    .unwrap();
-  assert_eq!(in_instructions.len(), 1);
-  assert_eq!(
-    in_instructions[0],
-    InInstruction {
-      id: LogIndex {
-        block_hash: *receipt.block_hash.unwrap(),
-        // First is the Transfer log, then the InInstruction log
-        index_within_block: receipt.inner.logs()[1].log_index.unwrap(),
-      },
-      transaction_hash: **tx.hash(),
-      from: tx.recover_signer().unwrap(),
-      coin,
-      amount,
-      data: shorthand.encode(),
-    }
-  );
+  let erc20 = Erc20::deploy(&test).await;
+
+  let coin = Coin::Erc20(erc20.address());
+  let amount = U256::from(1);
+  let shorthand = Test::in_instruction();
+
+  let mut tx = test.router.in_instruction(coin, amount, &shorthand);
+  tx.gas_price = 100_000_000_000u128;
+  tx.gas_limit = 1_000_000;
+
+  let tx = ethereum_primitives::deterministically_sign(tx);
+  erc20.mint(&test, tx.recover_signer().unwrap(), amount).await;
+  test.publish_in_instruction_tx(tx, coin, amount, &shorthand).await;
 }
 
 #[tokio::test]

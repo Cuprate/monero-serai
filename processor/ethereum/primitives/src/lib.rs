@@ -14,7 +14,7 @@ mod borsh;
 pub use borsh::*;
 
 /// An index of a log within a block.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, BorshSerialize, BorshDeserialize)]
 #[borsh(crate = "::borsh")]
 pub struct LogIndex {
   /// The hash of the block which produced this log.
