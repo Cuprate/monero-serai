@@ -19,6 +19,7 @@ use alloy_node_bindings::{Anvil, AnvilInstance};
 
 use scale::Encode;
 use serai_client::{
+  networks::ethereum::Address as SeraiEthereumAddress,
   primitives::SeraiAddress,
   in_instructions::primitives::{
     InInstruction as SeraiInInstruction, RefundableInInstruction, Shorthand,
@@ -317,6 +318,24 @@ impl Test {
     );
   }
 
+  fn execute_tx(
+    &self,
+    coin: Coin,
+    fee: U256,
+    out_instructions: &[(SeraiEthereumAddress, U256)],
+  ) -> TxLegacy {
+    let out_instructions = OutInstructions::from(out_instructions);
+    let msg = Router::execute_message(
+      self.chain_id,
+      self.state.next_nonce,
+      coin,
+      fee,
+      out_instructions.clone(),
+    );
+    let sig = sign(self.state.key.unwrap(), &msg);
+    self.router.execute(coin, fee, out_instructions, &sig)
+  }
+
   fn escape_hatch_tx(&self, escape_to: Address) -> TxLegacy {
     let msg = Router::escape_hatch_message(self.chain_id, self.state.next_nonce, escape_to);
     let sig = sign(self.state.key.unwrap(), &msg);
@@ -383,12 +402,10 @@ async fn test_no_serai_key() {
       test.call_and_decode_err(test.update_serai_key_tx().1).await,
       IRouterErrors::SeraiKeyWasNone(IRouter::SeraiKeyWasNone {})
     ));
-    /* TODO
     assert!(matches!(
-      test.call_and_decode_err(test.execute_tx()).await,
+      test.call_and_decode_err(test.execute_tx(Coin::Ether, U256::from(0), &[])).await,
       IRouterErrors::SeraiKeyWasNone(IRouter::SeraiKeyWasNone {})
     ));
-    */
     assert!(matches!(
       test.call_and_decode_err(test.escape_hatch_tx(Address::ZERO)).await,
       IRouterErrors::SeraiKeyWasNone(IRouter::SeraiKeyWasNone {})
@@ -662,7 +679,10 @@ async fn test_escape_hatch() {
       test.call_and_decode_err(test.eth_in_instruction_tx().3).await,
       IRouterErrors::EscapeHatchInvoked(IRouter::EscapeHatchInvoked {})
     ));
-    // TODO execute
+    assert!(matches!(
+      test.call_and_decode_err(test.execute_tx(Coin::Ether, U256::from(0), &[])).await,
+      IRouterErrors::EscapeHatchInvoked(IRouter::EscapeHatchInvoked {})
+    ));
     // We reject further attempts to update the escape hatch to prevent the last key from being
     // able to switch from the honest escape hatch to siphoning via a malicious escape hatch (such
     // as after the validators represented unstake)
@@ -721,10 +741,6 @@ async fn test_escape_hatch() {
   error Reentered();
   error EscapeFailed();
   function executeArbitraryCode(bytes memory code) external payable;
-  struct Signature {
-    bytes32 c;
-    bytes32 s;
-  }
   enum DestinationType {
     Address,
     Code
