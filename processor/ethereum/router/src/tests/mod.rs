@@ -322,7 +322,7 @@ impl Test {
     coin: Coin,
     fee: U256,
     out_instructions: &[(SeraiEthereumAddress, U256)],
-  ) -> TxLegacy {
+  ) -> ([u8; 32], TxLegacy) {
     let out_instructions = OutInstructions::from(out_instructions);
     let msg = Router::execute_message(
       self.chain_id,
@@ -331,8 +331,47 @@ impl Test {
       fee,
       out_instructions.clone(),
     );
+    let msg_hash = ethereum_primitives::keccak256(&msg);
     let sig = sign(self.state.key.unwrap(), &msg);
-    self.router.execute(coin, fee, out_instructions, &sig)
+
+    let mut tx = self.router.execute(coin, fee, out_instructions, &sig);
+    // Restore the original estimate as the gas limit to ensure it's sufficient, at least in our
+    // test cases
+    tx.gas_limit = (tx.gas_limit * 100) / Router::GAS_REPRICING_BUFFER;
+
+    (msg_hash, tx)
+  }
+
+  async fn execute(
+    &mut self,
+    coin: Coin,
+    fee: U256,
+    out_instructions: &[(SeraiEthereumAddress, U256)],
+    results: Vec<bool>,
+  ) -> u64 {
+    let (message_hash, mut tx) = self.execute_tx(coin, fee, out_instructions);
+    tx.gas_price = 100_000_000_000;
+    let tx = ethereum_primitives::deterministically_sign(tx);
+    let receipt = ethereum_test_primitives::publish_tx(&self.provider, tx.clone()).await;
+    assert!(receipt.status());
+    // We don't check the gas for `execute` as it's infeasible. Due to our use of account
+    // abstraction, it isn't a critical if we do ever under-estimate, solely an unprofitable relay
+
+    {
+      let block = receipt.block_number.unwrap();
+      let executed = self.router.executed(block ..= block).await.unwrap();
+      assert_eq!(executed.len(), 1);
+      assert_eq!(
+        executed[0],
+        Executed::Batch { nonce: self.state.next_nonce, message_hash, results }
+      );
+    }
+
+    self.state.next_nonce += 1;
+    self.verify_state().await;
+
+    // We do return the gas used in case a caller can benefit from it
+    CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used)
   }
 
   fn escape_hatch_tx(&self, escape_to: Address) -> TxLegacy {
@@ -402,7 +441,7 @@ async fn test_no_serai_key() {
       IRouterErrors::SeraiKeyWasNone(IRouter::SeraiKeyWasNone {})
     ));
     assert!(matches!(
-      test.call_and_decode_err(test.execute_tx(Coin::Ether, U256::from(0), &[])).await,
+      test.call_and_decode_err(test.execute_tx(Coin::Ether, U256::from(0), &[]).1).await,
       IRouterErrors::SeraiKeyWasNone(IRouter::SeraiKeyWasNone {})
     ));
     assert!(matches!(
@@ -555,7 +594,7 @@ async fn test_erc20_router_in_instruction() {
   let tx = TxLegacy {
     chain_id: None,
     nonce: 0,
-    gas_price: 100_000_000_000u128,
+    gas_price: 100_000_000_000,
     gas_limit: 1_000_000,
     to: test.router.address().into(),
     value: U256::ZERO,
@@ -592,12 +631,27 @@ async fn test_erc20_top_level_transfer_in_instruction() {
   let shorthand = Test::in_instruction();
 
   let mut tx = test.router.in_instruction(coin, amount, &shorthand);
-  tx.gas_price = 100_000_000_000u128;
+  tx.gas_price = 100_000_000_000;
   tx.gas_limit = 1_000_000;
 
   let tx = ethereum_primitives::deterministically_sign(tx);
   erc20.mint(&test, tx.recover_signer().unwrap(), amount).await;
   test.publish_in_instruction_tx(tx, coin, amount, &shorthand).await;
+}
+
+#[tokio::test]
+async fn test_empty_execute() {
+  let mut test = Test::new().await;
+  test.confirm_next_serai_key().await;
+  let () =
+    test.provider.raw_request("anvil_setBalance".into(), (test.router.address(), 1)).await.unwrap();
+  let gas_used = test.execute(Coin::Ether, U256::from(1), &[], vec![]).await;
+
+  // For the empty ETH case, we do compare this cost to the base cost
+  const CALL_GAS_STIPEND: u64 = 2_300;
+  // We don't use the call gas stipend here
+  const UNUSED_GAS: u64 = CALL_GAS_STIPEND;
+  assert_eq!(gas_used + UNUSED_GAS, Router::EXECUTE_BASE_GAS);
 }
 
 #[tokio::test]
@@ -643,7 +697,7 @@ async fn test_escape_hatch() {
     let tx = ethereum_primitives::deterministically_sign(TxLegacy {
       to: Address([1; 20].into()).into(),
       gas_limit: 21_000,
-      gas_price: 100_000_000_000u128,
+      gas_price: 100_000_000_000,
       value: U256::from(1),
       ..Default::default()
     });
@@ -679,7 +733,7 @@ async fn test_escape_hatch() {
       IRouterErrors::EscapeHatchInvoked(IRouter::EscapeHatchInvoked {})
     ));
     assert!(matches!(
-      test.call_and_decode_err(test.execute_tx(Coin::Ether, U256::from(0), &[])).await,
+      test.call_and_decode_err(test.execute_tx(Coin::Ether, U256::from(0), &[]).1).await,
       IRouterErrors::EscapeHatchInvoked(IRouter::EscapeHatchInvoked {})
     ));
     // We reject further attempts to update the escape hatch to prevent the last key from being

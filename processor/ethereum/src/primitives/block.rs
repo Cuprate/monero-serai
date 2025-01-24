@@ -97,12 +97,19 @@ impl primitives::Block for FullEpoch {
   > {
     let mut res = HashMap::new();
     for executed in &self.executed {
-      let Some(expected) =
+      let Some(mut expected) =
         eventualities.active_eventualities.remove(executed.nonce().to_le_bytes().as_slice())
       else {
         // TODO: Why is this a continue, not an assert?
         continue;
       };
+      // If this is a Batch Eventuality, we didn't know how the OutInstructions would resolve at
+      // time of creation. Copy the results from the actual transaction into the expectation
+      if let (Executed::Batch { results, .. }, Executed::Batch { results: expected_results, .. }) =
+        (executed, &mut expected.0)
+      {
+        *expected_results = results.clone();
+      }
       assert_eq!(
         executed,
         &expected.0,
@@ -119,7 +126,7 @@ impl primitives::Block for FullEpoch {
         Accordingly, we have free reign as to what to set the transaction ID to.
 
         We set the ID to the nonce as it's the most helpful value and unique barring someone
-        finding the premise for this as a hash.
+        finding the preimage for this as a hash.
       */
       let mut tx_id = [0; 32];
       tx_id[.. 8].copy_from_slice(executed.nonce().to_le_bytes().as_slice());

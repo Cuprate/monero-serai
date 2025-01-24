@@ -22,8 +22,10 @@ pub struct Erc20(Address);
 impl Erc20 {
   pub(crate) async fn deploy(test: &Test) -> Self {
     const BYTECODE: &[u8] = {
-      const BYTECODE_HEX: &[u8] =
-        include_bytes!(concat!(env!("OUT_DIR"), "/serai-processor-ethereum-router/TestERC20.bin"));
+      const BYTECODE_HEX: &[u8] = include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/serai-processor-ethereum-router/tests/TestERC20.bin"
+      ));
       const BYTECODE: [u8; BYTECODE_HEX.len() / 2] =
         match hex::const_decode_to_array::<{ BYTECODE_HEX.len() / 2 }>(BYTECODE_HEX) {
           Ok(bytecode) => bytecode,

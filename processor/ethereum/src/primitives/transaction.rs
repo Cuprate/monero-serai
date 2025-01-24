@@ -52,7 +52,7 @@ impl Action {
         Executed::NextSeraiKeySet { nonce: *nonce, key: key.eth_repr() }
       }
       Self::Batch { chain_id: _, nonce, .. } => {
-        Executed::Batch { nonce: *nonce, message_hash: keccak256(self.message()) }
+        Executed::Batch { nonce: *nonce, message_hash: keccak256(self.message()), results: vec![] }
       }
     })
   }

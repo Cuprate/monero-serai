@@ -68,6 +68,14 @@ use abi::{
 #[cfg(test)]
 mod tests;
 
+// As per Dencun, used for estimating gas for determining relayer fees
+const NON_ZERO_BYTE_GAS_COST: u64 = 16;
+const MEMORY_EXPANSION_COST: u64 = 3; // Does not model the quadratic cost
+const COLD_COST: u64 = 2_600;
+const WARM_COST: u64 = 100;
+const POSITIVE_VALUE_COST: u64 = 9_000;
+const EMPTY_ACCOUNT_COST: u64 = 25_000;
+
 impl From<&Signature> for abi::Signature {
   fn from(signature: &Signature) -> Self {
     Self {
@@ -134,35 +142,33 @@ pub struct InInstruction {
   pub data: Vec<u8>,
 }
 
+impl From<&(SeraiAddress, U256)> for abi::OutInstruction {
+  fn from((address, amount): &(SeraiAddress, U256)) -> Self {
+    #[allow(non_snake_case)]
+    let (destinationType, destination) = match address {
+      SeraiAddress::Address(address) => {
+        // Per the documentation, `DestinationType::Address`'s value is an ABI-encoded address
+        (abi::DestinationType::Address, (Address::from(address)).abi_encode())
+      }
+      SeraiAddress::Contract(contract) => (
+        abi::DestinationType::Code,
+        (abi::CodeDestination {
+          gasLimit: contract.gas_limit(),
+          code: contract.code().to_vec().into(),
+        })
+        .abi_encode(),
+      ),
+    };
+    abi::OutInstruction { destinationType, destination: destination.into(), amount: *amount }
+  }
+}
+
 /// A list of `OutInstruction`s.
 #[derive(Clone)]
 pub struct OutInstructions(Vec<abi::OutInstruction>);
 impl From<&[(SeraiAddress, U256)]> for OutInstructions {
   fn from(outs: &[(SeraiAddress, U256)]) -> Self {
-    Self(
-      outs
-        .iter()
-        .map(|(address, amount)| {
-          #[allow(non_snake_case)]
-          let (destinationType, destination) = match address {
-            SeraiAddress::Address(address) => {
-              // Per the documentation, `DestinationType::Address`'s value is an ABI-encoded
-              // address
-              (abi::DestinationType::Address, (Address::from(address)).abi_encode())
-            }
-            SeraiAddress::Contract(contract) => (
-              abi::DestinationType::Code,
-              (abi::CodeDestination {
-                gasLimit: contract.gas_limit(),
-                code: contract.code().to_vec().into(),
-              })
-              .abi_encode(),
-            ),
-          };
-          abi::OutInstruction { destinationType, destination: destination.into(), amount: *amount }
-        })
-        .collect(),
-    )
+    Self(outs.iter().map(Into::into).collect())
   }
 }
 
@@ -189,6 +195,8 @@ pub enum Executed {
     nonce: u64,
     /// The hash of the signed message for the Batch executed.
     message_hash: [u8; 32],
+    /// The results of the `OutInstruction`s executed.
+    results: Vec<bool>,
   },
   /// The escape hatch was set.
   EscapeHatch {
@@ -238,12 +246,15 @@ pub struct Router {
   address: Address,
 }
 impl Router {
+  // Gas allocated for ERC20 calls
+  const GAS_FOR_ERC20_CALL: u64 = 100_000;
+
   /*
     The gas limits to use for transactions.
 
-    These are expected to be constant as a distributed group signs the transactions invoking these
-    calls. Having the gas be constant prevents needing to run a protocol to determine what gas to
-    use.
+    These are expected to be constant as a distributed group may sign the transactions invoking
+    these calls. Having the gas be constant prevents needing to run a protocol to determine what
+    gas to use.
 
     These gas limits may break if/when gas opcodes undergo repricing. In that case, this library is
     expected to be modified with these made parameters. The caller would then be expected to pass
@@ -251,8 +262,17 @@ impl Router {
   */
   const CONFIRM_NEXT_SERAI_KEY_GAS: u64 = 57_736;
   const UPDATE_SERAI_KEY_GAS: u64 = 60_045;
-  const EXECUTE_BASE_GAS: u64 = 48_000;
+  const EXECUTE_BASE_GAS: u64 = 51_131;
   const ESCAPE_HATCH_GAS: u64 = 61_238;
+
+  /*
+    The percentage to actually use as the gas limit, in case any opcodes are repriced or errors
+    occurred.
+
+    Per prior commentary, this is just intended to be best-effort. If this is unnecessary, the gas
+    will be unspent. If this becomes necessary, it avoids needing an update.
+  */
+  const GAS_REPRICING_BUFFER: u64 = 120;
 
   fn code() -> Vec<u8> {
     const BYTECODE: &[u8] = {
@@ -325,7 +345,7 @@ impl Router {
     TxLegacy {
       to: TxKind::Call(self.address),
       input: abi::confirmNextSeraiKeyCall::new((abi::Signature::from(sig),)).abi_encode().into(),
-      gas_limit: Self::CONFIRM_NEXT_SERAI_KEY_GAS * 120 / 100,
+      gas_limit: Self::CONFIRM_NEXT_SERAI_KEY_GAS * Self::GAS_REPRICING_BUFFER / 100,
       ..Default::default()
     }
   }
@@ -351,7 +371,7 @@ impl Router {
       ))
       .abi_encode()
       .into(),
-      gas_limit: Self::UPDATE_SERAI_KEY_GAS * 120 / 100,
+      gas_limit: Self::UPDATE_SERAI_KEY_GAS * Self::GAS_REPRICING_BUFFER / 100,
       ..Default::default()
     }
   }
@@ -404,18 +424,103 @@ impl Router {
     .abi_encode()
   }
 
+  /// The estimated gas cost for this OutInstruction.
+  ///
+  /// This is not guaranteed to be correct or even sufficient. It is a hint and a hint alone used
+  /// for determining relayer fees.
+  fn execute_out_instruction_gas_estimate_internal(
+    coin: Coin,
+    instruction: &abi::OutInstruction,
+  ) -> u64 {
+    // The assigned cost for performing an additional iteration of the loop
+    const ITERATION_COST: u64 = 5_000;
+    // The additional cost for a `DestinationType.Code`, as an additional buffer for its complexity
+    const CODE_COST: u64 = 10_000;
+
+    let size = u64::try_from(instruction.abi_encoded_size()).unwrap();
+    let calldata_memory_cost =
+      (NON_ZERO_BYTE_GAS_COST * size) + (MEMORY_EXPANSION_COST * size.div_ceil(32));
+
+    ITERATION_COST +
+      (match coin {
+        Coin::Ether => match instruction.destinationType {
+          // We assume we're tranferring a positive value to a cold, empty account
+          abi::DestinationType::Address => {
+            calldata_memory_cost + COLD_COST + POSITIVE_VALUE_COST + EMPTY_ACCOUNT_COST
+          }
+          abi::DestinationType::Code => {
+            // OutInstructions can't be encoded/decoded and doesn't have pub internals, enabling it
+            // to be correct by construction
+            let code = abi::CodeDestination::abi_decode(&instruction.destination, true).unwrap();
+            // This performs a call to self with the value, incurring the positive-value cost before
+            // CREATE's
+            calldata_memory_cost +
+              CODE_COST +
+              (WARM_COST + POSITIVE_VALUE_COST + u64::from(code.gasLimit))
+          }
+          abi::DestinationType::__Invalid => unreachable!(),
+        },
+        Coin::Erc20(_) => {
+          // The ERC20 is warmed by the fee payment to the relayer
+          let erc20_call_gas = WARM_COST + Self::GAS_FOR_ERC20_CALL;
+          match instruction.destinationType {
+            abi::DestinationType::Address => calldata_memory_cost + erc20_call_gas,
+            abi::DestinationType::Code => {
+              let code = abi::CodeDestination::abi_decode(&instruction.destination, true).unwrap();
+              calldata_memory_cost +
+                CODE_COST +
+                erc20_call_gas +
+                // Call to self to deploy the contract
+                (WARM_COST + u64::from(code.gasLimit))
+            }
+            abi::DestinationType::__Invalid => unreachable!(),
+          }
+        }
+      })
+  }
+
+  /// The estimated gas cost for this OutInstruction.
+  ///
+  /// This is not guaranteed to be correct or even sufficient. It is a hint and a hint alone used
+  /// for determining relayer fees.
+  pub fn execute_out_instruction_gas_estimate(coin: Coin, address: SeraiAddress) -> u64 {
+    Self::execute_out_instruction_gas_estimate_internal(
+      coin,
+      &abi::OutInstruction::from(&(address, U256::ZERO)),
+    )
+  }
+
+  /// The estimated gas cost for this batch.
+  ///
+  /// This is not guaranteed to be correct or even sufficient. It is a hint and a hint alone used
+  /// for determining relayer fees.
+  pub fn execute_gas_estimate(coin: Coin, outs: &OutInstructions) -> u64 {
+    Self::EXECUTE_BASE_GAS +
+      (match coin {
+        // This is warm as it's the message sender who is called with the fee payment
+        Coin::Ether => WARM_COST + POSITIVE_VALUE_COST,
+        // This is cold as we say the fee payment is the one warming the ERC20
+        Coin::Erc20(_) => COLD_COST + Self::GAS_FOR_ERC20_CALL,
+      }) +
+      outs
+        .0
+        .iter()
+        .map(|out| Self::execute_out_instruction_gas_estimate_internal(coin, out))
+        .sum::<u64>()
+  }
+
   /// Construct a transaction to execute a batch of `OutInstruction`s.
   ///
-  /// The gas limit and gas price are not set and are left to the caller.
+  /// The gas limit is set to an estimate which may or may not be sufficient. The caller is
+  /// expected to set a correct gas limit. The gas price is not set and is left to the caller.
   pub fn execute(&self, coin: Coin, fee: U256, outs: OutInstructions, sig: &Signature) -> TxLegacy {
-    // TODO
-    let gas_limit = Self::EXECUTE_BASE_GAS + outs.0.iter().map(|_| 200_000 + 10_000).sum::<u64>();
+    let gas = Self::execute_gas_estimate(coin, &outs);
     TxLegacy {
       to: TxKind::Call(self.address),
       input: abi::executeCall::new((abi::Signature::from(sig), Address::from(coin), fee, outs.0))
         .abi_encode()
         .into(),
-      gas_limit: gas_limit * 120 / 100,
+      gas_limit: gas * Self::GAS_REPRICING_BUFFER / 100,
       ..Default::default()
     }
   }
@@ -436,7 +541,7 @@ impl Router {
     TxLegacy {
       to: TxKind::Call(self.address),
       input: abi::escapeHatchCall::new((abi::Signature::from(sig), escape_to)).abi_encode().into(),
-      gas_limit: Self::ESCAPE_HATCH_GAS * 120 / 100,
+      gas_limit: Self::ESCAPE_HATCH_GAS * Self::GAS_REPRICING_BUFFER / 100,
       ..Default::default()
     }
   }
@@ -679,6 +784,24 @@ impl Router {
               TransportErrorKind::Custom(format!("failed to convert nonce to u64: {e:?}").into())
             })?,
             message_hash: event.messageHash.into(),
+            results: {
+              let results_len = usize::try_from(event.resultsLength).map_err(|e| {
+                TransportErrorKind::Custom(
+                  format!("failed to convert resultsLength to usize: {e:?}").into(),
+                )
+              })?;
+              if results_len.div_ceil(8) != event.results.len() {
+                Err(TransportErrorKind::Custom(
+                  "resultsLength didn't align with results length".to_string().into(),
+                ))?;
+              }
+              let mut results = Vec::with_capacity(results_len);
+              for b in 0 .. results_len {
+                let byte = event.results[b / 8];
+                results.push(((byte >> (b % 8)) & 1) == 1);
+              }
+              results
+            },
           });
         }
         Some(&EscapeHatchEvent::SIGNATURE_HASH) => {

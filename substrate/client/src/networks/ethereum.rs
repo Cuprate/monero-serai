@@ -14,8 +14,8 @@ pub const ADDRESS_GAS_LIMIT: u32 = 950_000;
 pub struct ContractDeployment {
   /// The gas limit to use for this contract's execution.
   ///
-  /// THis MUST be less than the Serai gas limit. The cost of it will be deducted from the amount
-  /// transferred.
+  /// This MUST be less than the Serai gas limit. The cost of it, and the associated costs with
+  /// making this transaction, will be deducted from the amount transferred.
   gas_limit: u32,
   /// The initialization code of the contract to deploy.
   ///
