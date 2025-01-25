@@ -1,47 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-  # Version patches
-  "patches/parking_lot_core",
-  "patches/parking_lot",
-  "patches/zstd",
-  "patches/rocksdb",
-
-  # std patches
-  "patches/matches",
-  "patches/is-terminal",
-
-  # Rewrites/redirects
-  "patches/option-ext",
-  "patches/directories-next",
-
-  "common/std-shims",
-  "common/zalloc",
-  "common/patchable-async-sleep",
-  "common/db",
-  "common/env",
-  "common/request",
-
-  "crypto/transcript",
-
-  "crypto/ff-group-tests",
-  "crypto/dalek-ff-group",
-  "crypto/ed448",
-  "crypto/ciphersuite",
-
-  "crypto/multiexp",
-
-  "crypto/schnorr",
-  "crypto/dleq",
-  "crypto/dkg",
-  "crypto/frost",
-  "crypto/schnorrkel",
-
-  "networks/bitcoin",
-
-  "networks/ethereum/alloy-simple-request-transport",
-  "networks/ethereum",
-  "networks/ethereum/relayer",
 
   "networks/monero/io",
   "networks/monero/generators",
@@ -57,58 +16,6 @@ members = [
   "networks/monero/wallet",
   "networks/monero/verify-chain",
 
-  "message-queue",
-
-  "processor/messages",
-  "processor",
-
-  "coordinator/tributary/tendermint",
-  "coordinator/tributary",
-  "coordinator",
-
-  "substrate/primitives",
-
-  "substrate/coins/primitives",
-  "substrate/coins/pallet",
-
-  "substrate/dex/pallet",
-
-  "substrate/validator-sets/primitives",
-  "substrate/validator-sets/pallet",
-
-  "substrate/genesis-liquidity/primitives",
-  "substrate/genesis-liquidity/pallet",
-
-  "substrate/emissions/primitives",
-  "substrate/emissions/pallet",
-
-  "substrate/economic-security/pallet",
-
-  "substrate/in-instructions/primitives",
-  "substrate/in-instructions/pallet",
-
-  "substrate/signals/primitives",
-  "substrate/signals/pallet",
-
-  "substrate/abi",
-
-  "substrate/runtime",
-  "substrate/node",
-
-  "substrate/client",
-
-  "orchestration",
-
-  "mini",
-
-  "tests/no-std",
-
-  "tests/docker",
-  "tests/message-queue",
-  "tests/processor",
-  "tests/coordinator",
-  "tests/full-stack",
-  "tests/reproducible-runtime",
 ]
 
 # Always compile Monero (and a variety of dependencies) with optimizations due

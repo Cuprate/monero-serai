@@ -3,7 +3,7 @@
 #![deny(missing_docs)]
 
 use curve25519_dalek::{scalar::Scalar, edwards::EdwardsPoint};
-
+use curve25519_dalek::edwards::CompressedEdwardsY;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -169,12 +169,12 @@ async fn check_block(rpc: impl Rpc, block_i: usize) {
                   };
 
                   let rpc_point = |point: &str| {
-                    decompress_point(
+                    decompress_point(CompressedEdwardsY(
                       hex::decode(point)
                         .expect("invalid hex for ring member")
                         .try_into()
                         .expect("invalid point len for ring member"),
-                    )
+                    ))
                     .expect("invalid point for ring member")
                   };
 

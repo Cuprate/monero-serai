@@ -66,8 +66,11 @@ fn clsag() {
     .unwrap()
     .swap_remove(0);
 
-    let image =
-      hash_to_point((ED25519_BASEPOINT_TABLE * secrets.0.deref()).compress().0) * secrets.0.deref();
+    let pseudo_out = pseudo_out.compress();
+
+    let image = (hash_to_point((ED25519_BASEPOINT_TABLE * secrets.0.deref()).compress().0) *
+      secrets.0.deref())
+    .compress();
     clsag.verify(&ring, &image, &pseudo_out, &msg).unwrap();
 
     // make sure verification fails if we throw a random `c1` at it.

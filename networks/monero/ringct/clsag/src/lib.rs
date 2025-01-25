@@ -22,7 +22,7 @@ use curve25519_dalek::{
   traits::{IsIdentity, MultiscalarMul, VartimePrecomputedMultiscalarMul},
   edwards::{EdwardsPoint, VartimeEdwardsPrecomputation},
 };
-
+use curve25519_dalek::edwards::CompressedEdwardsY;
 use monero_io::*;
 use monero_generators::hash_to_point;
 use monero_primitives::{INV_EIGHT, G_PRECOMP, Commitment, Decoys, keccak256_to_scalar};
@@ -104,7 +104,7 @@ fn core(
   D: &EdwardsPoint,
   s: &[Scalar],
   A_c1: &Mode,
-) -> ((EdwardsPoint, Scalar, Scalar), Scalar) {
+) -> ((CompressedEdwardsY, Scalar, Scalar), Scalar) {
   let n = ring.len();
 
   let images_precomp = match A_c1 {
@@ -216,14 +216,14 @@ fn core(
   }
 
   // This first tuple is needed to continue signing, the latter is the c to be tested/worked with
-  ((D_INV_EIGHT, c * mu_P, c * mu_C), c1)
+  ((D_INV_EIGHT.compress(), c * mu_P, c * mu_C), c1)
 }
 
 /// The CLSAG signature, as used in Monero.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Clsag {
   /// The difference of the commitment randomnesses, scaling the key image generator.
-  pub D: EdwardsPoint,
+  pub D: CompressedEdwardsY,
   /// The responses for each ring member.
   pub s: Vec<Scalar>,
   /// The first challenge in the ring.
@@ -345,7 +345,7 @@ impl Clsag {
       nonce.zeroize();
 
       debug_assert!(clsag
-        .verify(inputs[i].1.decoys.ring(), &key_images[i], &pseudo_out, &msg)
+        .verify(inputs[i].1.decoys.ring(), &key_images[i].compress(), &pseudo_out.compress(), &msg)
         .is_ok());
 
       res.push((clsag, pseudo_out));
@@ -358,8 +358,8 @@ impl Clsag {
   pub fn verify(
     &self,
     ring: &[[EdwardsPoint; 2]],
-    I: &EdwardsPoint,
-    pseudo_out: &EdwardsPoint,
+    I: &CompressedEdwardsY,
+    pseudo_out: &CompressedEdwardsY,
     msg: &[u8; 32],
   ) -> Result<(), ClsagError> {
     // Preliminary checks
@@ -370,16 +370,24 @@ impl Clsag {
     if ring.len() != self.s.len() {
       Err(ClsagError::InvalidS)?;
     }
+
+    let I = decompress_point(*I).ok_or(ClsagError::InvalidImage)?;
     if I.is_identity() || (!I.is_torsion_free()) {
       Err(ClsagError::InvalidImage)?;
     }
 
-    let D = self.D.mul_by_cofactor();
+    let D = decompress_point(self.D)
+      .map(|p| EdwardsPoint::mul_by_cofactor(&p))
+      .ok_or(ClsagError::InvalidD)?;
     if D.is_identity() {
       Err(ClsagError::InvalidD)?;
     }
 
-    let (_, c1) = core(ring, I, pseudo_out, msg, &D, &self.s, &Mode::Verify(self.c1));
+    let Some(pseudo_out) = decompress_point(*pseudo_out) else {
+      return Err(ClsagError::InvalidCommitment);
+    };
+
+    let (_, c1) = core(ring, &I, &pseudo_out, msg, &D, &self.s, &Mode::Verify(self.c1));
     if c1 != self.c1 {
       Err(ClsagError::InvalidC1)?;
     }
@@ -390,11 +398,15 @@ impl Clsag {
   pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
     write_raw_vec(write_scalar, &self.s, w)?;
     w.write_all(&self.c1.to_bytes())?;
-    write_point(&self.D, w)
+    write_compressed_point(&self.D, w)
   }
 
   /// Read a CLSAG.
   pub fn read<R: Read>(decoys: usize, r: &mut R) -> io::Result<Clsag> {
-    Ok(Clsag { s: read_raw_vec(read_scalar, decoys, r)?, c1: read_scalar(r)?, D: read_point(r)? })
+    Ok(Clsag {
+      s: read_raw_vec(read_scalar, decoys, r)?,
+      c1: read_scalar(r)?,
+      D: read_compressed_point(r)?,
+    })
   }
 }

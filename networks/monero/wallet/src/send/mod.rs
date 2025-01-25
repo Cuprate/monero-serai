@@ -10,7 +10,7 @@ use zeroize::{Zeroize, Zeroizing};
 use rand_core::{RngCore, CryptoRng};
 use rand::seq::SliceRandom;
 
-use curve25519_dalek::{constants::ED25519_BASEPOINT_TABLE, Scalar, EdwardsPoint};
+use curve25519_dalek::{constants::ED25519_BASEPOINT_TABLE, Scalar, edwards::CompressedEdwardsY};
 #[cfg(feature = "multisig")]
 use frost::FrostError;
 
@@ -39,8 +39,11 @@ mod multisig;
 #[cfg(feature = "multisig")]
 pub use multisig::{TransactionMachine, TransactionSignMachine, TransactionSignatureMachine};
 
-pub(crate) fn key_image_sort(x: &EdwardsPoint, y: &EdwardsPoint) -> core::cmp::Ordering {
-  x.compress().to_bytes().cmp(&y.compress().to_bytes()).reverse()
+pub(crate) fn key_image_sort(
+  x: &CompressedEdwardsY,
+  y: &CompressedEdwardsY,
+) -> core::cmp::Ordering {
+  x.to_bytes().cmp(&y.to_bytes()).reverse()
 }
 
 #[derive(Clone, PartialEq, Eq, Zeroize)]
@@ -226,7 +229,7 @@ pub struct SignableTransaction {
 
 struct SignableTransactionWithKeyImages {
   intent: SignableTransaction,
-  key_images: Vec<EdwardsPoint>,
+  key_images: Vec<CompressedEdwardsY>,
 }
 
 impl SignableTransaction {
@@ -496,7 +499,10 @@ impl SignableTransaction {
     Ok(res)
   }
 
-  fn with_key_images(mut self, key_images: Vec<EdwardsPoint>) -> SignableTransactionWithKeyImages {
+  fn with_key_images(
+    mut self,
+    key_images: Vec<CompressedEdwardsY>,
+  ) -> SignableTransactionWithKeyImages {
     debug_assert_eq!(self.inputs.len(), key_images.len());
 
     // Sort the inputs by their key images
@@ -528,7 +534,7 @@ impl SignableTransaction {
         Err(SendError::WrongPrivateKey)?;
       }
       let key_image = input_key.deref() * hash_to_point(input.key().compress().to_bytes());
-      key_images.push(key_image);
+      key_images.push(key_image.compress());
     }
 
     // Convert to a SignableTransactionWithKeyImages
@@ -574,7 +580,7 @@ impl SignableTransaction {
     *pseudo_outs = Vec::with_capacity(inputs_len);
     for (clsag, pseudo_out) in clsags_and_pseudo_outs {
       clsags.push(clsag);
-      pseudo_outs.push(pseudo_out);
+      pseudo_outs.push(pseudo_out.compress());
     }
 
     // Return the signed TX

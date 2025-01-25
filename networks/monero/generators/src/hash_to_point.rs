@@ -1,6 +1,6 @@
 use subtle::ConditionallySelectable;
 
-use curve25519_dalek::edwards::EdwardsPoint;
+use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 
 use group::ff::{Field, PrimeField};
 use dalek_ff_group::FieldElement;
@@ -49,5 +49,5 @@ pub fn hash_to_point(bytes: [u8; 32]) -> EdwardsPoint {
   let mut bytes = Y.to_repr();
   bytes[31] |= sign.unwrap_u8() << 7;
 
-  decompress_point(bytes).unwrap().mul_by_cofactor()
+  decompress_point(CompressedEdwardsY(bytes)).unwrap().mul_by_cofactor()
 }
