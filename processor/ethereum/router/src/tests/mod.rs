@@ -465,6 +465,8 @@ impl Test {
         self.provider.debug_trace_transaction(*tx.hash(), Default::default()).await.unwrap();
       let refund =
         trace.try_into_default_frame().unwrap().struct_logs.last().unwrap().refund_counter;
+      // This isn't capped to 1/5th of the TX's gas usage yet that's fine as none of our tests are
+      // so refund intensive
       unused_gas += refund.unwrap_or(0)
     }
 
@@ -881,7 +883,37 @@ async fn test_eth_code_out_instruction() {
 
 #[tokio::test]
 async fn test_erc20_code_out_instruction() {
-  todo!("TODO")
+  let mut test = Test::new().await;
+  test.confirm_next_serai_key().await;
+
+  let erc20 = Erc20::deploy(&test).await;
+  let coin = Coin::Erc20(erc20.address());
+
+  let mut rand_address = [0xff; 20];
+  OsRng.fill_bytes(&mut rand_address);
+  let amount_out = U256::from(2);
+  let out_instructions = OutInstructions::from(
+    [(
+      SeraiEthereumAddress::Contract(ContractDeployment::new(50_000, vec![]).unwrap()),
+      amount_out,
+    )]
+    .as_slice(),
+  );
+
+  let gas = test.router.execute_gas(coin, U256::from(1), &out_instructions);
+  let fee = U256::from(gas);
+
+  // Mint to the Router the necessary amount of the ERC20
+  erc20.mint(&test, test.router.address(), amount_out + fee).await;
+
+  let (tx, gas_used) = test.execute(coin, fee, out_instructions, vec![true]).await;
+
+  let unused_gas = test.gas_unused_by_calls(&tx).await;
+  assert_eq!(gas_used + unused_gas, gas);
+
+  assert_eq!(erc20.balance_of(&test, test.router.address()).await, U256::from(0));
+  assert_eq!(erc20.balance_of(&test, tx.recover_signer().unwrap()).await, U256::from(fee));
+  assert_eq!(erc20.balance_of(&test, test.router.address().create(1)).await, amount_out);
 }
 
 #[tokio::test]
@@ -1006,68 +1038,5 @@ async fn test_escape_hatch() {
   error Reentered();
   error EscapeFailed();
   function executeArbitraryCode(bytes memory code) external payable;
-  enum DestinationType {
-    Address,
-    Code
-  }
-  struct CodeDestination {
-    uint32 gasLimit;
-    bytes code;
-  }
-  struct OutInstruction {
-    DestinationType destinationType;
-    bytes destination;
-    uint256 amount;
-  }
-  function execute(
-    Signature calldata signature,
-    address coin,
-    uint256 fee,
-    OutInstruction[] calldata outs
-  ) external;
-}
-
-async fn publish_outs(
-  provider: &RootProvider<SimpleRequest>,
-  router: &Router,
-  key: (Scalar, PublicKey),
-  nonce: u64,
-  coin: Coin,
-  fee: U256,
-  outs: OutInstructions,
-) -> TransactionReceipt {
-  let msg = Router::execute_message(nonce, coin, fee, outs.clone());
-
-  let nonce = Scalar::random(&mut OsRng);
-  let c = Signature::challenge(ProjectivePoint::GENERATOR * nonce, &key.1, &msg);
-  let s = nonce + (c * key.0);
-
-  let sig = Signature::new(c, s).unwrap();
-
-  let mut tx = router.execute(coin, fee, outs, &sig);
-  tx.gas_price = 100_000_000_000;
-  let tx = ethereum_primitives::deterministically_sign(tx);
-  ethereum_test_primitives::publish_tx(provider, tx).await
-}
-
-#[tokio::test]
-async fn test_eth_address_out_instruction() {
-  let (_anvil, provider, router, key) = setup_test().await;
-  confirm_next_serai_key(&provider, &router, 1, key).await;
-
-  let mut amount = U256::try_from(OsRng.next_u64()).unwrap();
-  let mut fee = U256::try_from(OsRng.next_u64()).unwrap();
-  if fee > amount {
-    core::mem::swap(&mut amount, &mut fee);
-  }
-  assert!(amount >= fee);
-  ethereum_test_primitives::fund_account(&provider, router.address(), amount).await;
-
-  let instructions = OutInstructions::from([].as_slice());
-  let receipt = publish_outs(&provider, &router, key, 2, Coin::Ether, fee, instructions).await;
-  assert!(receipt.status());
-  assert_eq!(Router::EXECUTE_ETH_BASE_GAS, ((receipt.gas_used + 1000) / 1000) * 1000);
-
-  assert_eq!(router.next_nonce(receipt.block_hash.unwrap().into()).await.unwrap(), 3);
-}
+  function createAddress(uint256 nonce) private view returns (address);
 */

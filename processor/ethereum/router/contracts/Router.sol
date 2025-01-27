@@ -36,17 +36,6 @@ contract Router is IRouterWithoutCollisions {
   bytes32 constant REENTRANCY_GUARD_SLOT = bytes32(uint256(keccak256("ReentrancyGuard Router")) - 1);
 
   /**
-   * @dev The next nonce used to determine the address of contracts deployed with CREATE. This is
-   *   used to predict the addresses of deployed contracts ahead of time.
-   */
-  /*
-    We don't expose a getter for this as it shouldn't be expected to have any specific value at a
-    given moment in time. If someone wants to know the address of their deployed contract, they can
-    have it emit an event and verify the emitting contract is the expected one.
-  */
-  uint256 private _smartContractNonce;
-
-  /**
    * @dev The nonce to verify the next signature with, incremented upon an action to prevent
    *   replays/out-of-order execution
    */
@@ -63,6 +52,17 @@ contract Router is IRouterWithoutCollisions {
    *   expects
    */
   bytes32 private _seraiKey;
+
+  /**
+   * @dev The next nonce used to determine the address of contracts deployed with CREATE. This is
+   *   used to predict the addresses of deployed contracts ahead of time.
+   */
+  /*
+    We don't expose a getter for this as it shouldn't be expected to have any specific value at a
+    given moment in time. If someone wants to know the address of their deployed contract, they can
+    have it emit an event and verify the emitting contract is the expected one.
+  */
+  uint64 private _smartContractNonce;
 
   /// @dev The address escaped to
   address private _escapedTo;
@@ -84,6 +84,7 @@ contract Router is IRouterWithoutCollisions {
 
     // Clear the re-entrancy guard to allow multiple transactions to non-re-entrant functions within
     // a transaction
+    // slither-disable-next-line assembly
     assembly {
       tstore(reentrancyGuardSlot, 0)
     }
@@ -163,8 +164,8 @@ contract Router is IRouterWithoutCollisions {
     bytes32 signatureC;
     bytes32 signatureS;
 
-    // slither-disable-next-line assembly
     uint256 chainID = block.chainid;
+    // slither-disable-next-line assembly
     assembly {
       // Read the signature (placed after the function signature)
       signatureC := mload(add(message, 36))
@@ -402,6 +403,64 @@ contract Router is IRouterWithoutCollisions {
     }
   }
 
+  /// @notice The header for an address, when encoded with RLP for the purposes of CREATE
+  /// @dev 0x80 + 20, shifted left 30 bytes
+  uint256 constant ADDRESS_HEADER = (0x80 + 20) << (30 * 8);
+
+  /// @notice Calculate the next address which will be deployed to by CREATE
+  /**
+   * @dev This manually implements the RLP encoding to save gas over the usage of CREATE2. While the
+   *   the keccak256 call itself is surprisingly cheap, the memory cost (quadratic and already
+   *   detrimental to other `OutInstruction`s within the same batch) is sufficiently concerning to
+   *   justify this.
+   */
+  function createAddress(uint256 nonce) private view returns (address) {
+    unchecked {
+      /*
+        The hashed RLP-encoding is:
+          - Header (1 byte)
+          - Address header (1 bytes)
+          - Address (20 bytes)
+          - Nonce (1 ..= 9 bytes)
+        Since the maximum length is less than 32 bytes, we calculate this on the stack.
+      */
+      // Shift the address from bytes 12 .. 32 to 2 .. 22
+      uint256 rlpEncoding = uint256(uint160(address(this))) << 80;
+      uint256 rlpEncodingLen;
+      if (nonce <= 0x7f) {
+        // 22 + 1
+        rlpEncodingLen = 23;
+        // Shift from byte 31 to byte 22
+        rlpEncoding |= (nonce << 72);
+      } else {
+        uint256 bitsNeeded = 8;
+        while (nonce >= (1 << bitsNeeded)) {
+          bitsNeeded += 8;
+        }
+        uint256 bytesNeeded = bitsNeeded / 8;
+        rlpEncodingLen = 22 + bytesNeeded;
+        // Shift from byte 31 to byte 22
+        rlpEncoding |= 0x80 + (bytesNeeded << 72);
+        // Shift past the unnecessary bytes
+        rlpEncoding |= nonce << (72 - bitsNeeded);
+      }
+      rlpEncoding |= ADDRESS_HEADER;
+      // The header, which does not include itself in its length, shifted into the first byte
+      rlpEncoding |= (0xc0 + (rlpEncodingLen - 1)) << 248;
+
+      // Store this to the scratch space
+      bytes memory rlp;
+      // slither-disable-next-line assembly
+      assembly {
+        mstore(0, rlpEncodingLen)
+        mstore(32, rlpEncoding)
+        rlp := 0
+      }
+
+      return address(uint160(uint256(keccak256(rlp))));
+    }
+  }
+
   /// @notice Execute some arbitrary code within a secure sandbox
   /**
    * @dev This performs sandboxing by deploying this code with `CREATE`. This is an external
@@ -473,12 +532,12 @@ contract Router is IRouterWithoutCollisions {
           /*
             If it's an ERC20, we calculate the address of the will-be contract and transfer to it
             before deployment. This avoids needing to deploy the contract, then call transfer, then
-            call the contract again
-          */
-          address nextAddress = address(
-            uint160(uint256(keccak256(abi.encodePacked(address(this), _smartContractNonce))))
-          );
+            call the contract again.
 
+            We use CREATE, not CREATE2, despite the difficulty in calculating the address
+            in-contract, for cost-savings reasons explained within `createAddress`'s documentation.
+          */
+          address nextAddress = createAddress(_smartContractNonce);
           success = erc20TransferOut(nextAddress, coin, outs[i].amount);
         }
 
