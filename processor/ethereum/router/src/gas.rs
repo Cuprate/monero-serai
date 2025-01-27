@@ -169,8 +169,14 @@ impl Router {
           // Clear the existing return data
           interpreter.return_data_buffer.clear();
 
-          // If calling an ERC20, trigger the return data's worst-case by returning `true`
-          // (as expected by compliant ERC20s)
+          /*
+            If calling an ERC20, trigger the return data's worst-case by returning `true`
+            (as expected by compliant ERC20s). Else return none, as we expect none or won't bother
+            copying/decoding the return data.
+
+            This doesn't affect calls to ecrecover as those use STATICCALL and this overrides CALL
+            alone.
+          */
           if Some(address_called) == erc20 {
             interpreter.return_data_buffer = true.abi_encode().into();
           }

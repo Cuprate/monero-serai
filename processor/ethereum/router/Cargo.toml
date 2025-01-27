@@ -61,7 +61,7 @@ rand_core = { version = "0.6", default-features = false, features = ["std"] }
 
 k256 = { version = "0.13", default-features = false, features = ["std"] }
 
-alloy-provider = { version = "0.9", default-features = false, features = ["trace-api"] }
+alloy-provider = { version = "0.9", default-features = false, features = ["debug-api", "trace-api"] }
 alloy-rpc-client = { version = "0.9", default-features = false }
 alloy-node-bindings = { version = "0.9", default-features = false }
 

@@ -13,7 +13,10 @@ use alloy_consensus::{TxLegacy, Signed};
 use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionInput, TransactionRequest};
 use alloy_simple_request_transport::SimpleRequest;
 use alloy_rpc_client::ClientBuilder;
-use alloy_provider::{Provider, RootProvider, ext::TraceApi};
+use alloy_provider::{
+  Provider, RootProvider,
+  ext::{DebugApi, TraceApi},
+};
 
 use alloy_node_bindings::{Anvil, AnvilInstance};
 
@@ -120,7 +123,7 @@ impl Test {
 
   async fn new() -> Self {
     // The following is explicitly only evaluated against the cancun network upgrade at this time
-    let anvil = Anvil::new().arg("--hardfork").arg("cancun").spawn();
+    let anvil = Anvil::new().arg("--hardfork").arg("cancun").arg("--tracing").spawn();
 
     let provider = Arc::new(RootProvider::new(
       ClientBuilder::default().transport(SimpleRequest::new(anvil.endpoint()), true),
@@ -434,6 +437,38 @@ impl Test {
     tx.gas_limit = 100_000;
     tx.gas_price = 100_000_000_000;
     tx
+  }
+
+  async fn gas_unused_by_calls(&self, tx: &Signed<TxLegacy>) -> u64 {
+    let mut unused_gas = 0;
+
+    // Handle the difference between the gas limits and gas used values
+    let traces = self.provider.trace_transaction(*tx.hash()).await.unwrap();
+    // Skip the initial call to the Router and the call to ecrecover
+    let mut traces = traces.iter().skip(2);
+    while let Some(trace) = traces.next() {
+      let trace = &trace.trace;
+      // We're tracing the Router's immediate actions, and it doesn't immediately call CREATE
+      // It only makes a call to itself which calls CREATE
+      let gas_provided = trace.action.as_call().as_ref().unwrap().gas;
+      let gas_spent = trace.result.as_ref().unwrap().gas_used();
+      unused_gas += gas_provided - gas_spent;
+      for _ in 0 .. trace.subtraces {
+        // Skip the subtraces for this call (such as CREATE)
+        traces.next().unwrap();
+      }
+    }
+
+    // Also handle any refunds
+    {
+      let trace =
+        self.provider.debug_trace_transaction(*tx.hash(), Default::default()).await.unwrap();
+      let refund =
+        trace.try_into_default_frame().unwrap().struct_logs.last().unwrap().refund_counter;
+      unused_gas += refund.unwrap_or(0)
+    }
+
+    unused_gas
   }
 }
 
@@ -772,11 +807,32 @@ async fn test_eth_address_out_instruction() {
 
 #[tokio::test]
 async fn test_erc20_address_out_instruction() {
-  todo!("TODO")
-  /*
+  let mut test = Test::new().await;
+  test.confirm_next_serai_key().await;
+
+  let erc20 = Erc20::deploy(&test).await;
+  let coin = Coin::Erc20(erc20.address());
+
+  let mut rand_address = [0xff; 20];
+  OsRng.fill_bytes(&mut rand_address);
+  let amount_out = U256::from(2);
+  let out_instructions =
+    OutInstructions::from([(SeraiEthereumAddress::Address(rand_address), amount_out)].as_slice());
+
+  let gas = test.router.execute_gas(coin, U256::from(1), &out_instructions);
+  let fee = U256::from(gas);
+
+  // Mint to the Router the necessary amount of the ERC20
+  erc20.mint(&test, test.router.address(), amount_out + fee).await;
+
+  let (tx, gas_used) = test.execute(coin, fee, out_instructions, vec![true]).await;
+  // Uses traces due to the complexity of modeling Erc20::transfer
+  let unused_gas = test.gas_unused_by_calls(&tx).await;
+  assert_eq!(gas_used + unused_gas, gas);
+
   assert_eq!(erc20.balance_of(&test, test.router.address()).await, U256::from(0));
-  assert_eq!(erc20.balance_of(&test, test.state.escaped_to.unwrap()).await, amount);
-  */
+  assert_eq!(erc20.balance_of(&test, tx.recover_signer().unwrap()).await, U256::from(fee));
+  assert_eq!(erc20.balance_of(&test, rand_address.into()).await, amount_out);
 }
 
 #[tokio::test]
@@ -806,24 +862,7 @@ async fn test_eth_code_out_instruction() {
 
   // We use call-traces here to determine how much gas was allowed but unused due to the complexity
   // of modeling the call to the Router itself and the following CREATE
-  let mut unused_gas = 0;
-  {
-    let traces = test.provider.trace_transaction(*tx.hash()).await.unwrap();
-    // Skip the call to the Router and the ecrecover
-    let mut traces = traces.iter().skip(2);
-    while let Some(trace) = traces.next() {
-      let trace = &trace.trace;
-      // We're tracing the Router's immediate actions, and it doesn't immediately call CREATE
-      // It only makes a call to itself which calls CREATE
-      let gas_provided = trace.action.as_call().as_ref().unwrap().gas;
-      let gas_spent = trace.result.as_ref().unwrap().gas_used();
-      unused_gas += gas_provided - gas_spent;
-      for _ in 0 .. trace.subtraces {
-        // Skip the subtraces for this call (such as CREATE)
-        traces.next().unwrap();
-      }
-    }
-  }
+  let unused_gas = test.gas_unused_by_calls(&tx).await;
   assert_eq!(gas_used + unused_gas, gas);
 
   assert_eq!(
