@@ -65,6 +65,8 @@ use abi::{
   Escaped as EscapedEvent,
 };
 
+mod gas;
+
 #[cfg(test)]
 mod tests;
 
@@ -78,7 +80,7 @@ impl From<&Signature> for abi::Signature {
 }
 
 /// A coin on Ethereum.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, BorshSerialize, BorshDeserialize)]
 pub enum Coin {
   /// Ether, the native coin of Ethereum.
   Ether,
@@ -236,62 +238,25 @@ pub struct Escape {
 pub struct Router {
   provider: Arc<RootProvider<SimpleRequest>>,
   address: Address,
+  empty_execute_gas: HashMap<Coin, u64>,
 }
 impl Router {
-  // Gas allocated for ERC20 calls
-  #[cfg(test)]
-  const GAS_FOR_ERC20_CALL: u64 = 100_000;
-
-  /*
-    The gas limits to use for transactions.
-
-    These are expected to be constant as a distributed group may sign the transactions invoking
-    these calls. Having the gas be constant prevents needing to run a protocol to determine what
-    gas to use.
-
-    These gas limits may break if/when gas opcodes undergo repricing. In that case, this library is
-    expected to be modified with these made parameters. The caller would then be expected to pass
-    the correct set of prices for the network they're operating on.
-  */
-  const CONFIRM_NEXT_SERAI_KEY_GAS: u64 = 57_736;
-  const UPDATE_SERAI_KEY_GAS: u64 = 60_045;
-  const EXECUTE_ETH_BASE_GAS: u64 = 51_131;
-  const EXECUTE_ERC20_BASE_GAS: u64 = 149_831;
-  const EXECUTE_ETH_ADDRESS_OUT_INSTRUCTION_GAS: u64 = 41_453;
-  const EXECUTE_ETH_CODE_OUT_INSTRUCTION_GAS: u64 = 51_723;
-  const EXECUTE_ERC20_ADDRESS_OUT_INSTRUCTION_GAS: u64 = 0; // TODO
-  const EXECUTE_ERC20_CODE_OUT_INSTRUCTION_GAS: u64 = 0; // TODO
-  const ESCAPE_HATCH_GAS: u64 = 61_238;
-
-  /*
-    The percentage to actually use as the gas limit, in case any opcodes are repriced or errors
-    occurred.
-
-    Per prior commentary, this is just intended to be best-effort. If this is unnecessary, the gas
-    will be unspent. If this becomes necessary, it avoids needing an update.
-  */
-  const GAS_REPRICING_BUFFER: u64 = 120;
-
-  fn code() -> Vec<u8> {
-    const BYTECODE: &[u8] = {
-      const BYTECODE_HEX: &[u8] =
+  fn init_code(key: &PublicKey) -> Vec<u8> {
+    const INITCODE: &[u8] = {
+      const INITCODE_HEX: &[u8] =
         include_bytes!(concat!(env!("OUT_DIR"), "/serai-processor-ethereum-router/Router.bin"));
-      const BYTECODE: [u8; BYTECODE_HEX.len() / 2] =
-        match hex::const_decode_to_array::<{ BYTECODE_HEX.len() / 2 }>(BYTECODE_HEX) {
+      const INITCODE: [u8; INITCODE_HEX.len() / 2] =
+        match hex::const_decode_to_array::<{ INITCODE_HEX.len() / 2 }>(INITCODE_HEX) {
           Ok(bytecode) => bytecode,
           Err(_) => panic!("Router.bin did not contain valid hex"),
         };
-      &BYTECODE
+      &INITCODE
     };
 
-    BYTECODE.to_vec()
-  }
-
-  fn init_code(key: &PublicKey) -> Vec<u8> {
-    let mut bytecode = Self::code();
     // Append the constructor arguments
-    bytecode.extend((abi::constructorCall { initialSeraiKey: key.eth_repr().into() }).abi_encode());
-    bytecode
+    let mut initcode = INITCODE.to_vec();
+    initcode.extend((abi::constructorCall { initialSeraiKey: key.eth_repr().into() }).abi_encode());
+    initcode
   }
 
   /// Obtain the transaction to deploy this contract.
@@ -319,7 +284,7 @@ impl Router {
     else {
       return Ok(None);
     };
-    Ok(Some(Self { provider, address }))
+    Ok(Some(Self { provider, address, empty_execute_gas: HashMap::new() }))
   }
 
   /// The address of the router.
@@ -338,12 +303,11 @@ impl Router {
 
   /// Construct a transaction to confirm the next key representing Serai.
   ///
-  /// The gas price is not set and is left to the caller.
+  /// The gas limit and gas price are not set and are left to the caller.
   pub fn confirm_next_serai_key(&self, sig: &Signature) -> TxLegacy {
     TxLegacy {
       to: TxKind::Call(self.address),
       input: abi::confirmNextSeraiKeyCall::new((abi::Signature::from(sig),)).abi_encode().into(),
-      gas_limit: Self::CONFIRM_NEXT_SERAI_KEY_GAS * Self::GAS_REPRICING_BUFFER / 100,
       ..Default::default()
     }
   }
@@ -359,7 +323,7 @@ impl Router {
 
   /// Construct a transaction to update the key representing Serai.
   ///
-  /// The gas price is not set and is left to the caller.
+  /// The gas limit and gas price are not set and are left to the caller.
   pub fn update_serai_key(&self, public_key: &PublicKey, sig: &Signature) -> TxLegacy {
     TxLegacy {
       to: TxKind::Call(self.address),
@@ -369,7 +333,6 @@ impl Router {
       ))
       .abi_encode()
       .into(),
-      gas_limit: Self::UPDATE_SERAI_KEY_GAS * Self::GAS_REPRICING_BUFFER / 100,
       ..Default::default()
     }
   }
@@ -422,89 +385,15 @@ impl Router {
     .abi_encode()
   }
 
-  /// The estimated gas cost for this OutInstruction.
-  ///
-  /// This is not guaranteed to be correct or even sufficient. It is a hint and a hint alone used
-  /// for determining relayer fees.
-  fn execute_out_instruction_gas_estimate_internal(
-    coin: Coin,
-    instruction: &abi::OutInstruction,
-  ) -> u64 {
-    // As per Dencun, used for estimating gas for determining relayer fees
-    const NON_ZERO_BYTE_GAS_COST: u64 = 16;
-    const MEMORY_EXPANSION_COST: u64 = 3; // Does not model the quadratic cost
-
-    let size = u64::try_from(instruction.abi_encoded_size()).unwrap();
-    let calldata_memory_cost =
-      (size * NON_ZERO_BYTE_GAS_COST) + (size.div_ceil(32) * MEMORY_EXPANSION_COST);
-
-    match coin {
-      Coin::Ether => match instruction.destinationType {
-        // The calldata and memory cost is already part of this
-        abi::DestinationType::Address => Self::EXECUTE_ETH_ADDRESS_OUT_INSTRUCTION_GAS,
-        abi::DestinationType::Code => {
-          // OutInstructions can't be encoded/decoded and doesn't have pub internals, enabling it
-          // to be correct by construction
-          let code = abi::CodeDestination::abi_decode(&instruction.destination, true).unwrap();
-          Self::EXECUTE_ETH_CODE_OUT_INSTRUCTION_GAS +
-            calldata_memory_cost +
-            u64::from(code.gasLimit)
-        }
-        abi::DestinationType::__Invalid => unreachable!(),
-      },
-      Coin::Erc20(_) => match instruction.destinationType {
-        abi::DestinationType::Address => Self::EXECUTE_ERC20_ADDRESS_OUT_INSTRUCTION_GAS,
-        abi::DestinationType::Code => {
-          let code = abi::CodeDestination::abi_decode(&instruction.destination, true).unwrap();
-          Self::EXECUTE_ERC20_CODE_OUT_INSTRUCTION_GAS +
-            calldata_memory_cost +
-            u64::from(code.gasLimit)
-        }
-        abi::DestinationType::__Invalid => unreachable!(),
-      },
-    }
-  }
-
-  /// The estimated gas cost for this OutInstruction.
-  ///
-  /// This is not guaranteed to be correct or even sufficient. It is a hint and a hint alone used
-  /// for determining relayer fees.
-  pub fn execute_out_instruction_gas_estimate(coin: Coin, address: SeraiAddress) -> u64 {
-    Self::execute_out_instruction_gas_estimate_internal(
-      coin,
-      &abi::OutInstruction::from(&(address, U256::ZERO)),
-    )
-  }
-
-  /// The estimated gas cost for this batch.
-  ///
-  /// This is not guaranteed to be correct or even sufficient. It is a hint and a hint alone used
-  /// for determining relayer fees.
-  pub fn execute_gas_estimate(coin: Coin, outs: &OutInstructions) -> u64 {
-    (match coin {
-      // This is warm as it's the message sender who is called with the fee payment
-      Coin::Ether => Self::EXECUTE_ETH_BASE_GAS,
-      // This is cold as we say the fee payment is the one warming the ERC20
-      Coin::Erc20(_) => Self::EXECUTE_ERC20_BASE_GAS,
-    }) + outs
-      .0
-      .iter()
-      .map(|out| Self::execute_out_instruction_gas_estimate_internal(coin, out))
-      .sum::<u64>()
-  }
-
   /// Construct a transaction to execute a batch of `OutInstruction`s.
   ///
-  /// The gas limit is set to an estimate which may or may not be sufficient. The caller is
-  /// expected to set a correct gas limit. The gas price is not set and is left to the caller.
+  /// The gas limit and gas price are not set and are left to the caller.
   pub fn execute(&self, coin: Coin, fee: U256, outs: OutInstructions, sig: &Signature) -> TxLegacy {
-    let gas = Self::execute_gas_estimate(coin, &outs);
     TxLegacy {
       to: TxKind::Call(self.address),
       input: abi::executeCall::new((abi::Signature::from(sig), Address::from(coin), fee, outs.0))
         .abi_encode()
         .into(),
-      gas_limit: gas * Self::GAS_REPRICING_BUFFER / 100,
       ..Default::default()
     }
   }
@@ -520,12 +409,11 @@ impl Router {
 
   /// Construct a transaction to trigger the escape hatch.
   ///
-  /// The gas price is not set and is left to the caller.
+  /// The gas limit and gas price are not set and are left to the caller.
   pub fn escape_hatch(&self, escape_to: Address, sig: &Signature) -> TxLegacy {
     TxLegacy {
       to: TxKind::Call(self.address),
       input: abi::escapeHatchCall::new((abi::Signature::from(sig), escape_to)).abi_encode().into(),
-      gas_limit: Self::ESCAPE_HATCH_GAS * Self::GAS_REPRICING_BUFFER / 100,
       ..Default::default()
     }
   }

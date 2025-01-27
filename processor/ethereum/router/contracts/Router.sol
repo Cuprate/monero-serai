@@ -13,11 +13,15 @@ import "IRouter.sol";
   individual transactions is critical.
 
   We don't check the return values as we don't care if the calls succeeded. We solely care we made
-  them. If someone configures an external contract in a way which borks, we epxlicitly define that
+  them. If someone configures an external contract in a way which borks, we explicitly define that
   as their fault and out-of-scope to this contract.
 
   If an actual invariant within Serai exists, an escape hatch exists to move to a new contract. Any
   improperly handled actions can be re-signed and re-executed at that point in time.
+
+  The `execute` function pays a relayer, as expected for use in the account-abstraction model. Other
+  functions also expect relayers, yet do not explicitly pay fees. Those calls are expected to be
+  justified via the backpressure of transactions with fees.
 */
 // slither-disable-start low-level-calls,unchecked-lowlevel
 

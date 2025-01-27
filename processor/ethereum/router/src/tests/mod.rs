@@ -6,14 +6,14 @@ use group::ff::Field;
 use k256::{Scalar, ProjectivePoint};
 
 use alloy_core::primitives::{Address, U256};
-use alloy_sol_types::{SolCall, SolEvent};
+use alloy_sol_types::{SolValue, SolCall, SolEvent};
 
 use alloy_consensus::{TxLegacy, Signed};
 
 use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionInput, TransactionRequest};
 use alloy_simple_request_transport::SimpleRequest;
 use alloy_rpc_client::ClientBuilder;
-use alloy_provider::{Provider, RootProvider};
+use alloy_provider::{Provider, RootProvider, ext::TraceApi};
 
 use alloy_node_bindings::{Anvil, AnvilInstance};
 
@@ -41,8 +41,6 @@ mod constants;
 mod erc20;
 use erc20::Erc20;
 
-const CALL_GAS_STIPEND: u64 = 2_300;
-
 pub(crate) fn test_key() -> (Scalar, PublicKey) {
   loop {
     let key = Scalar::random(&mut OsRng);
@@ -63,15 +61,24 @@ fn sign(key: (Scalar, PublicKey), msg: &[u8]) -> Signature {
 /// Calculate the gas used by a transaction if none of its calldata's bytes were zero
 struct CalldataAgnosticGas;
 impl CalldataAgnosticGas {
-  fn calculate(tx: &TxLegacy, mut gas_used: u64) -> u64 {
-    const ZERO_BYTE_GAS_COST: u64 = 4;
-    const NON_ZERO_BYTE_GAS_COST: u64 = 16;
-    for b in &tx.input {
-      if *b == 0 {
-        gas_used += NON_ZERO_BYTE_GAS_COST - ZERO_BYTE_GAS_COST;
+  #[must_use]
+  fn calculate(input: &[u8], mut constant_zero_bytes: usize, gas_used: u64) -> u64 {
+    use revm::{primitives::SpecId, interpreter::gas::calculate_initial_tx_gas};
+
+    let mut without_variable_zero_bytes = Vec::with_capacity(input.len());
+    for byte in input {
+      if (constant_zero_bytes > 0) && (*byte == 0) {
+        constant_zero_bytes -= 1;
+        without_variable_zero_bytes.push(0);
+      } else {
+        // If this is a variably zero byte, or a non-zero byte, push a non-zero byte
+        without_variable_zero_bytes.push(0xff);
       }
     }
-    gas_used
+    gas_used +
+      (calculate_initial_tx_gas(SpecId::CANCUN, &without_variable_zero_bytes, false, &[], 0)
+        .initial_gas -
+        calculate_initial_tx_gas(SpecId::CANCUN, input, false, &[], 0).initial_gas)
   }
 }
 
@@ -173,6 +180,7 @@ impl Test {
 
   async fn confirm_next_serai_key(&mut self) {
     let mut tx = self.confirm_next_serai_key_tx();
+    tx.gas_limit = Router::CONFIRM_NEXT_SERAI_KEY_GAS + 5_000;
     tx.gas_price = 100_000_000_000;
     let tx = ethereum_primitives::deterministically_sign(tx);
     let receipt = ethereum_test_primitives::publish_tx(&self.provider, tx.clone()).await;
@@ -181,12 +189,12 @@ impl Test {
     // is the highest possible gas cost and what the constant is derived from
     if self.state.key.is_none() {
       assert_eq!(
-        CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used),
+        CalldataAgnosticGas::calculate(tx.tx().input.as_ref(), 0, receipt.gas_used),
         Router::CONFIRM_NEXT_SERAI_KEY_GAS,
       );
     } else {
       assert!(
-        CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used) <
+        CalldataAgnosticGas::calculate(tx.tx().input.as_ref(), 0, receipt.gas_used) <
           Router::CONFIRM_NEXT_SERAI_KEY_GAS
       );
     }
@@ -221,18 +229,20 @@ impl Test {
 
   async fn update_serai_key(&mut self) {
     let (next_key, mut tx) = self.update_serai_key_tx();
+    tx.gas_limit = Router::UPDATE_SERAI_KEY_GAS + 5_000;
     tx.gas_price = 100_000_000_000;
     let tx = ethereum_primitives::deterministically_sign(tx);
     let receipt = ethereum_test_primitives::publish_tx(&self.provider, tx.clone()).await;
     assert!(receipt.status());
     if self.state.next_key.is_none() {
       assert_eq!(
-        CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used),
+        CalldataAgnosticGas::calculate(tx.tx().input.as_ref(), 0, receipt.gas_used),
         Router::UPDATE_SERAI_KEY_GAS,
       );
     } else {
       assert!(
-        CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used) < Router::UPDATE_SERAI_KEY_GAS
+        CalldataAgnosticGas::calculate(tx.tx().input.as_ref(), 0, receipt.gas_used) <
+          Router::UPDATE_SERAI_KEY_GAS
       );
     }
 
@@ -323,9 +333,8 @@ impl Test {
     &self,
     coin: Coin,
     fee: U256,
-    out_instructions: &[(SeraiEthereumAddress, U256)],
+    out_instructions: OutInstructions,
   ) -> ([u8; 32], TxLegacy) {
-    let out_instructions = OutInstructions::from(out_instructions);
     let msg = Router::execute_message(
       self.chain_id,
       self.state.next_nonce,
@@ -334,13 +343,17 @@ impl Test {
       out_instructions.clone(),
     );
     let msg_hash = ethereum_primitives::keccak256(&msg);
-    let sig = sign(self.state.key.unwrap(), &msg);
+    let sig = loop {
+      let sig = sign(self.state.key.unwrap(), &msg);
+      // Standardize the zero bytes in the signature for calldata gas reasons
+      let has_zero_byte = sig.to_bytes().iter().filter(|b| **b == 0).count() != 0;
+      if has_zero_byte {
+        continue;
+      }
+      break sig;
+    };
 
-    let mut tx = self.router.execute(coin, fee, out_instructions, &sig);
-    // Restore the original estimate as the gas limit to ensure it's sufficient, at least in our
-    // test cases
-    tx.gas_limit = (tx.gas_limit * 100) / Router::GAS_REPRICING_BUFFER;
-
+    let tx = self.router.execute(coin, fee, out_instructions, &sig);
     (msg_hash, tx)
   }
 
@@ -348,16 +361,18 @@ impl Test {
     &mut self,
     coin: Coin,
     fee: U256,
-    out_instructions: &[(SeraiEthereumAddress, U256)],
+    out_instructions: OutInstructions,
     results: Vec<bool>,
-  ) -> (Signed<TxLegacy>, u64, u64) {
+  ) -> (Signed<TxLegacy>, u64) {
     let (message_hash, mut tx) = self.execute_tx(coin, fee, out_instructions);
+    tx.gas_limit = 1_000_000;
     tx.gas_price = 100_000_000_000;
     let tx = ethereum_primitives::deterministically_sign(tx);
     let receipt = ethereum_test_primitives::publish_tx(&self.provider, tx.clone()).await;
     assert!(receipt.status());
-    // We don't check the gas for `execute` as it's infeasible. Due to our use of account
-    // abstraction, it isn't a critical if we do ever under-estimate, solely an unprofitable relay
+
+    // We don't check the gas for `execute` here, instead at the call-sites where we have
+    // beneficial  context
 
     {
       let block = receipt.block_number.unwrap();
@@ -372,14 +387,15 @@ impl Test {
     self.state.next_nonce += 1;
     self.verify_state().await;
 
-    // We do return the gas used in case a caller can benefit from it
-    (tx.clone(), receipt.gas_used, CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used))
+    (tx.clone(), receipt.gas_used)
   }
 
   fn escape_hatch_tx(&self, escape_to: Address) -> TxLegacy {
     let msg = Router::escape_hatch_message(self.chain_id, self.state.next_nonce, escape_to);
     let sig = sign(self.state.key.unwrap(), &msg);
-    self.router.escape_hatch(escape_to, &sig)
+    let mut tx = self.router.escape_hatch(escape_to, &sig);
+    tx.gas_limit = Router::ESCAPE_HATCH_GAS + 5_000;
+    tx
   }
 
   async fn escape_hatch(&mut self) {
@@ -395,7 +411,11 @@ impl Test {
     let tx = ethereum_primitives::deterministically_sign(tx);
     let receipt = ethereum_test_primitives::publish_tx(&self.provider, tx.clone()).await;
     assert!(receipt.status());
-    assert_eq!(CalldataAgnosticGas::calculate(tx.tx(), receipt.gas_used), Router::ESCAPE_HATCH_GAS);
+    // This encodes an address which has 12 bytes of padding
+    assert_eq!(
+      CalldataAgnosticGas::calculate(tx.tx().input.as_ref(), 12, receipt.gas_used),
+      Router::ESCAPE_HATCH_GAS
+    );
 
     {
       let block = receipt.block_number.unwrap();
@@ -443,7 +463,9 @@ async fn test_no_serai_key() {
       IRouterErrors::SeraiKeyWasNone(IRouter::SeraiKeyWasNone {})
     ));
     assert!(matches!(
-      test.call_and_decode_err(test.execute_tx(Coin::Ether, U256::from(0), &[]).1).await,
+      test
+        .call_and_decode_err(test.execute_tx(Coin::Ether, U256::from(0), [].as_slice().into()).1)
+        .await,
       IRouterErrors::SeraiKeyWasNone(IRouter::SeraiKeyWasNone {})
     ));
     assert!(matches!(
@@ -645,72 +667,107 @@ async fn test_erc20_top_level_transfer_in_instruction() {
 async fn test_empty_execute() {
   let mut test = Test::new().await;
   test.confirm_next_serai_key().await;
-  let () =
-    test.provider.raw_request("anvil_setBalance".into(), (test.router.address(), 1)).await.unwrap();
 
   {
-    let (tx, raw_gas_used, gas_used) = test.execute(Coin::Ether, U256::from(1), &[], vec![]).await;
-    // We don't use the call gas stipend here
-    const UNUSED_GAS: u64 = CALL_GAS_STIPEND;
-    assert_eq!(gas_used + UNUSED_GAS, Router::EXECUTE_ETH_BASE_GAS);
+    let () = test
+      .provider
+      .raw_request("anvil_setBalance".into(), (test.router.address(), 100_000))
+      .await
+      .unwrap();
 
-    assert_eq!(test.provider.get_balance(test.router.address()).await.unwrap(), U256::from(0));
+    let gas = test.router.execute_gas(Coin::Ether, U256::from(1), &[].as_slice().into());
+    let fee = U256::from(gas);
+    let (tx, gas_used) = test.execute(Coin::Ether, fee, [].as_slice().into(), vec![]).await;
+    // We don't use the call gas stipend here
+    const UNUSED_GAS: u64 = revm::interpreter::gas::CALL_STIPEND;
+    assert_eq!(gas_used + UNUSED_GAS, gas);
+
+    assert_eq!(
+      test.provider.get_balance(test.router.address()).await.unwrap(),
+      U256::from(100_000 - gas)
+    );
     let minted_to_sender = u128::from(tx.tx().gas_limit) * tx.tx().gas_price;
-    let spent_by_sender = u128::from(raw_gas_used) * tx.tx().gas_price;
+    let spent_by_sender = u128::from(gas_used) * tx.tx().gas_price;
     assert_eq!(
       test.provider.get_balance(tx.recover_signer().unwrap()).await.unwrap() -
         U256::from(minted_to_sender - spent_by_sender),
-      U256::from(1)
+      U256::from(gas)
     );
   }
 
   {
-    // This uses a token of Address(0) as it'll be interpreted as a non-standard ERC20 which uses 0
-    // gas, letting us safely evaluate the EXECUTE_ERC20_BASE_GAS constant
-    let (_tx, _raw_gas_used, gas_used) =
-      test.execute(Coin::Erc20(Address::ZERO), U256::from(1), &[], vec![]).await;
-    // Add an extra 1000 gas for decoding the return value which would exist if a compliant ERC20
-    const UNUSED_GAS: u64 = Router::GAS_FOR_ERC20_CALL + 1000;
-    assert_eq!(gas_used + UNUSED_GAS, Router::EXECUTE_ERC20_BASE_GAS);
+    let token = Address::from([0xff; 20]);
+    {
+      #[rustfmt::skip]
+      let code = vec![
+        0x60, // push 1 byte                    | 3 gas
+        0x01, // the value 1
+        0x5f, // push 0                         | 2 gas
+        0x52, // mstore to offset 0 the value 1 | 3 gas
+        0x60, // push 1 byte                    | 3 gas
+        0x20, // the value 32
+        0x5f, // push 0                         | 2 gas
+        0xf3, // return from offset 0 1 word    | 0 gas
+        // 13 gas for the execution plus a single word of memory for 16 gas total
+      ];
+      // Deploy our 'token'
+      let () = test.provider.raw_request("anvil_setCode".into(), (token, code)).await.unwrap();
+      let call =
+        TransactionRequest::default().to(token).input(TransactionInput::new(vec![].into()));
+      // Check it returns the expected result
+      assert_eq!(
+        test.provider.call(&call).await.unwrap().as_ref(),
+        U256::from(1).abi_encode().as_slice()
+      );
+      // Check it has the expected gas cost
+      assert_eq!(test.provider.estimate_gas(&call).await.unwrap(), 21_000 + 16);
+    }
+
+    let gas = test.router.execute_gas(Coin::Erc20(token), U256::from(0), &[].as_slice().into());
+    let fee = U256::from(0);
+    let (_tx, gas_used) = test.execute(Coin::Erc20(token), fee, [].as_slice().into(), vec![]).await;
+    const UNUSED_GAS: u64 = Router::GAS_FOR_ERC20_CALL - 16;
+    assert_eq!(gas_used + UNUSED_GAS, gas);
   }
 }
+
+// TODO: Test order, length of results
+// TODO: Test reentrancy
 
 #[tokio::test]
 async fn test_eth_address_out_instruction() {
   let mut test = Test::new().await;
   test.confirm_next_serai_key().await;
-  let () =
-    test.provider.raw_request("anvil_setBalance".into(), (test.router.address(), 3)).await.unwrap();
+  let () = test
+    .provider
+    .raw_request("anvil_setBalance".into(), (test.router.address(), 100_000))
+    .await
+    .unwrap();
 
   let mut rand_address = [0xff; 20];
   OsRng.fill_bytes(&mut rand_address);
-  let (tx, raw_gas_used, gas_used) = test
-    .execute(
-      Coin::Ether,
-      U256::from(1),
-      &[(SeraiEthereumAddress::Address(rand_address), U256::from(2))],
-      vec![true],
-    )
-    .await;
-  // We don't use the call gas stipend here
-  const UNUSED_GAS: u64 = CALL_GAS_STIPEND;
-  // This doesn't model the quadratic memory costs
-  let gas_for_eth_address_out_instruction = gas_used + UNUSED_GAS - Router::EXECUTE_ETH_BASE_GAS;
-  // 2000 gas as a surplus for the quadratic memory cost and any inaccuracies
-  assert_eq!(
-    gas_for_eth_address_out_instruction + 2000,
-    Router::EXECUTE_ETH_ADDRESS_OUT_INSTRUCTION_GAS
-  );
+  let amount_out = U256::from(2);
+  let out_instructions =
+    OutInstructions::from([(SeraiEthereumAddress::Address(rand_address), amount_out)].as_slice());
 
-  assert_eq!(test.provider.get_balance(test.router.address()).await.unwrap(), U256::from(0));
+  let gas = test.router.execute_gas(Coin::Ether, U256::from(1), &out_instructions);
+  let fee = U256::from(gas);
+  let (tx, gas_used) = test.execute(Coin::Ether, fee, out_instructions, vec![true]).await;
+  const UNUSED_GAS: u64 = 2 * revm::interpreter::gas::CALL_STIPEND;
+  assert_eq!(gas_used + UNUSED_GAS, gas);
+
+  assert_eq!(
+    test.provider.get_balance(test.router.address()).await.unwrap(),
+    U256::from(100_000) - amount_out - fee
+  );
   let minted_to_sender = u128::from(tx.tx().gas_limit) * tx.tx().gas_price;
-  let spent_by_sender = u128::from(raw_gas_used) * tx.tx().gas_price;
+  let spent_by_sender = u128::from(gas_used) * tx.tx().gas_price;
   assert_eq!(
     test.provider.get_balance(tx.recover_signer().unwrap()).await.unwrap() -
       U256::from(minted_to_sender - spent_by_sender),
-    U256::from(1)
+    U256::from(fee)
   );
-  assert_eq!(test.provider.get_balance(rand_address.into()).await.unwrap(), U256::from(2));
+  assert_eq!(test.provider.get_balance(rand_address.into()).await.unwrap(), amount_out);
 }
 
 #[tokio::test]
@@ -726,39 +783,61 @@ async fn test_erc20_address_out_instruction() {
 async fn test_eth_code_out_instruction() {
   let mut test = Test::new().await;
   test.confirm_next_serai_key().await;
-  let () =
-    test.provider.raw_request("anvil_setBalance".into(), (test.router.address(), 3)).await.unwrap();
+  let () = test
+    .provider
+    .raw_request("anvil_setBalance".into(), (test.router.address(), 1_000_000))
+    .await
+    .unwrap();
 
   let mut rand_address = [0xff; 20];
   OsRng.fill_bytes(&mut rand_address);
-  let (tx, raw_gas_used, gas_used) = test
-    .execute(
-      Coin::Ether,
-      U256::from(1),
-      &[(
-        SeraiEthereumAddress::Contract(ContractDeployment::new(100_000, vec![]).unwrap()),
-        U256::from(2),
-      )],
-      vec![true],
-    )
-    .await;
-  // This doesn't model the quadratic memory costs
-  let gas_for_eth_code_out_instruction = gas_used - Router::EXECUTE_ETH_BASE_GAS;
-  // 2000 gas as a surplus for the quadratic memory cost and any inaccuracies
-  assert_eq!(gas_for_eth_code_out_instruction + 2000, Router::EXECUTE_ETH_CODE_OUT_INSTRUCTION_GAS);
+  let amount_out = U256::from(2);
+  let out_instructions = OutInstructions::from(
+    [(
+      SeraiEthereumAddress::Contract(ContractDeployment::new(50_000, vec![]).unwrap()),
+      amount_out,
+    )]
+    .as_slice(),
+  );
 
-  assert_eq!(test.provider.get_balance(test.router.address()).await.unwrap(), U256::from(0));
+  let gas = test.router.execute_gas(Coin::Ether, U256::from(1), &out_instructions);
+  let fee = U256::from(gas);
+  let (tx, gas_used) = test.execute(Coin::Ether, fee, out_instructions, vec![true]).await;
+
+  // We use call-traces here to determine how much gas was allowed but unused due to the complexity
+  // of modeling the call to the Router itself and the following CREATE
+  let mut unused_gas = 0;
+  {
+    let traces = test.provider.trace_transaction(*tx.hash()).await.unwrap();
+    // Skip the call to the Router and the ecrecover
+    let mut traces = traces.iter().skip(2);
+    while let Some(trace) = traces.next() {
+      let trace = &trace.trace;
+      // We're tracing the Router's immediate actions, and it doesn't immediately call CREATE
+      // It only makes a call to itself which calls CREATE
+      let gas_provided = trace.action.as_call().as_ref().unwrap().gas;
+      let gas_spent = trace.result.as_ref().unwrap().gas_used();
+      unused_gas += gas_provided - gas_spent;
+      for _ in 0 .. trace.subtraces {
+        // Skip the subtraces for this call (such as CREATE)
+        traces.next().unwrap();
+      }
+    }
+  }
+  assert_eq!(gas_used + unused_gas, gas);
+
+  assert_eq!(
+    test.provider.get_balance(test.router.address()).await.unwrap(),
+    U256::from(1_000_000) - amount_out - fee
+  );
   let minted_to_sender = u128::from(tx.tx().gas_limit) * tx.tx().gas_price;
-  let spent_by_sender = u128::from(raw_gas_used) * tx.tx().gas_price;
+  let spent_by_sender = u128::from(gas_used) * tx.tx().gas_price;
   assert_eq!(
     test.provider.get_balance(tx.recover_signer().unwrap()).await.unwrap() -
       U256::from(minted_to_sender - spent_by_sender),
-    U256::from(1)
+    U256::from(fee)
   );
-  assert_eq!(
-    test.provider.get_balance(test.router.address().create(1)).await.unwrap(),
-    U256::from(2)
-  );
+  assert_eq!(test.provider.get_balance(test.router.address().create(1)).await.unwrap(), amount_out);
 }
 
 #[tokio::test]
@@ -825,7 +904,9 @@ async fn test_escape_hatch() {
       IRouterErrors::EscapeHatchInvoked(IRouter::EscapeHatchInvoked {})
     ));
     assert!(matches!(
-      test.call_and_decode_err(test.execute_tx(Coin::Ether, U256::from(0), &[]).1).await,
+      test
+        .call_and_decode_err(test.execute_tx(Coin::Ether, U256::from(0), [].as_slice().into()).1)
+        .await,
       IRouterErrors::EscapeHatchInvoked(IRouter::EscapeHatchInvoked {})
     ));
     // We reject further attempts to update the escape hatch to prevent the last key from being
