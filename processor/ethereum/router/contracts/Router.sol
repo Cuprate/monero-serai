@@ -36,33 +36,33 @@ contract Router is IRouterWithoutCollisions {
   bytes32 constant REENTRANCY_GUARD_SLOT = bytes32(uint256(keccak256("ReentrancyGuard Router")) - 1);
 
   /**
-   * @dev The nonce to verify the next signature with, incremented upon an action to prevent
-   *   replays/out-of-order execution
-   */
-  uint256 private _nextNonce;
-
-  /**
-   * @dev The next public key for Serai's Ethereum validator set, in the form the Schnorr library
-   *   expects
-   */
-  bytes32 private _nextSeraiKey;
-
-  /**
-   * @dev The current public key for Serai's Ethereum validator set, in the form the Schnorr library
-   *   expects
-   */
-  bytes32 private _seraiKey;
-
-  /**
    * @dev The next nonce used to determine the address of contracts deployed with CREATE. This is
-   *   used to predict the addresses of deployed contracts ahead of time.
+   *  used to predict the addresses of deployed contracts ahead of time.
    */
   /*
     We don't expose a getter for this as it shouldn't be expected to have any specific value at a
     given moment in time. If someone wants to know the address of their deployed contract, they can
     have it emit an event and verify the emitting contract is the expected one.
   */
-  uint64 private _smartContractNonce;
+  uint256 private _smartContractNonce;
+
+  /**
+   * @dev The nonce to verify the next signature with, incremented upon an action to prevent
+   *  replays/out-of-order execution
+   */
+  uint256 private _nextNonce;
+
+  /**
+   * @dev The next public key for Serai's Ethereum validator set, in the form the Schnorr library
+   *  expects
+   */
+  bytes32 private _nextSeraiKey;
+
+  /**
+   * @dev The current public key for Serai's Ethereum validator set, in the form the Schnorr library
+   *  expects
+   */
+  bytes32 private _seraiKey;
 
   /// @dev The address escaped to
   address private _escapedTo;
@@ -122,10 +122,9 @@ contract Router is IRouterWithoutCollisions {
   }
 
   /**
-   * @dev
-   *   Verify a signature of the calldata, placed immediately after the function selector. The
-   *   calldata should be signed with the nonce taking the place of the signature's commitment to
-   *   its nonce, and the signature solution zeroed.
+   * @dev Verify a signature of the calldata, placed immediately after the function selector. The
+   *  calldata should be signed with the nonce taking the place of the signature's commitment to
+   *  its nonce, and the signature solution zeroed.
    */
   function verifySignature(bytes32 key)
     private
@@ -228,9 +227,9 @@ contract Router is IRouterWithoutCollisions {
   /// @notice Start updating the key representing Serai's Ethereum validators
   /**
    * @dev This does not validate the passed-in key as much as possible. This is accepted as the key
-   *   won't actually be rotated to until it provides a signature confirming the update however
-   *   (proving signatures can be made by the key in question and verified via our Schnorr
-   *   contract).
+   *  won't actually be rotated to until it provides a signature confirming the update however
+   *  (proving signatures can be made by the key in question and verified via our Schnorr
+   *  contract).
    *
    *  The hex bytes are to cause a collision with `IRouter.updateSeraiKey`.
    */
@@ -264,7 +263,7 @@ contract Router is IRouterWithoutCollisions {
   /// @param amount The amount to transfer in (msg.value if Ether)
   /**
    * @param instruction The Shorthand-encoded InInstruction for Serai to associate with this
-   *   transfer in
+   *  transfer in
    */
   // Re-entrancy doesn't bork this function
   // slither-disable-next-line reentrancy-events
@@ -327,7 +326,7 @@ contract Router is IRouterWithoutCollisions {
   /// @param amount The amount of the coin to transfer
   /**
    * @return success If the coins were successfully transferred out. This is defined as if the
-   *   call succeeded and returned true or nothing.
+   *  call succeeded and returned true or nothing.
    */
   // execute has this annotation yet this still flags (even when it doesn't have its own loop)
   // slither-disable-next-line calls-loop
@@ -377,7 +376,7 @@ contract Router is IRouterWithoutCollisions {
   /// @param amount The amount of the coin to transfer
   /**
    * @return success If the coins were successfully transferred out. For Ethereum, this is if the
-   *   call succeeded. For the ERC20, it's if the call succeeded and returned true or nothing.
+   *  call succeeded. For the ERC20, it's if the call succeeded and returned true or nothing.
    */
   function transferOut(address to, address coin, uint256 amount) private returns (bool success) {
     if (coin == address(0)) {
@@ -409,45 +408,57 @@ contract Router is IRouterWithoutCollisions {
 
   /// @notice Calculate the next address which will be deployed to by CREATE
   /**
-   * @dev This manually implements the RLP encoding to save gas over the usage of CREATE2. While the
-   *   the keccak256 call itself is surprisingly cheap, the memory cost (quadratic and already
-   *   detrimental to other `OutInstruction`s within the same batch) is sufficiently concerning to
-   *   justify this.
+   * @dev While CREATE2 is preferable inside smart contracts, CREATE2 is fundamentally vulnerable to
+   *  collisions. Our usage of CREATE forces an incremental nonce infeasible to brute force. While
+   *  addresses are still variable to the Router address, the Router address itself is the product
+   *  of an incremental nonce (the Deployer's). The Deployer's address is constant (generated via
+   *  NUMS methods), finally ensuring the security of this.
+   *
+   *  This is written to be constant-gas, allowing state-independent gas prediction.
+   *
+   *  This has undefined behavior when `nonce` is zero (EIP-161 makes this irrelevant).
    */
   function createAddress(uint256 nonce) internal view returns (address) {
     unchecked {
-      /*
-        The hashed RLP-encoding is:
-          - Header (1 byte)
-          - Address header (1 bytes)
-          - Address (20 bytes)
-          - Nonce (1 ..= 9 bytes)
-        Since the maximum length is less than 32 bytes, we calculate this on the stack.
-      */
-      // Shift the address from bytes 12 .. 32 to 2 .. 22
-      uint256 rlpEncoding = uint256(uint160(address(this))) << 80;
-      uint256 rlpEncodingLen;
-      if (nonce <= 0x7f) {
-        // 22 + 1
-        rlpEncodingLen = 23;
-        // Shift from byte 31 to byte 22
-        rlpEncoding |= (nonce << 72);
-      } else {
-        uint256 bitsNeeded = 8;
-        while (nonce >= (1 << bitsNeeded)) {
-          bitsNeeded += 8;
+      // The amount of bytes needed to represent the nonce
+      uint256 bitsNeeded = 0;
+      for (uint256 bits = 0; bits <= 64; bits += 8) {
+        bool valueFits = nonce < (uint256(1) << bits);
+        bool notPriorSet = bitsNeeded == 0;
+        // If the value fits, and the bits weren't prior set, we should set the bits now
+        uint256 shouldSet;
+        // slither-disable-next-line assembly
+        assembly {
+          shouldSet := and(valueFits, notPriorSet)
         }
-        uint256 bytesNeeded = bitsNeeded / 8;
-        // 22 + 1 + the amount of bytes needed
-        rlpEncodingLen = 23 + bytesNeeded;
-        // Shift from byte 31 to byte 22
-        rlpEncoding |= (0x80 + bytesNeeded) << 72;
-        // Shift past the unnecessary bytes
-        rlpEncoding |= nonce << (72 - bitsNeeded);
+        // Carry the existing bitsNeeded value, set bits if should set
+        bitsNeeded = bitsNeeded + (shouldSet * bits);
       }
-      rlpEncoding |= ADDRESS_HEADER;
+      uint256 bytesNeeded = bitsNeeded / 8;
+
+      // if the nonce is an RLP string or not
+      bool nonceIsNotStringBool = nonce <= 0x7f;
+      uint256 nonceIsNotString;
+      // slither-disable-next-line assembly
+      assembly {
+        nonceIsNotString := nonceIsNotStringBool
+      }
+      uint256 nonceIsString = nonceIsNotString ^ 1;
+
+      // Define the RLP length
+      uint256 rlpEncodingLen = 23 + (nonceIsString * bytesNeeded);
+
+      uint256 rlpEncoding =
       // The header, which does not include itself in its length, shifted into the first byte
-      rlpEncoding |= (0xc0 + (rlpEncodingLen - 1)) << 248;
+      ((0xc0 + (rlpEncodingLen - 1)) << 248)
+      // The address header, which is constant
+      | ADDRESS_HEADER
+      // Shift the address from bytes 12 .. 32 to 2 .. 22
+      | (uint256(uint160(address(this))) << 80)
+      // Shift the nonce (one byte) or the nonce's header from byte 31 to byte 22
+      | (((nonceIsNotString * nonce) + (nonceIsString * (0x80 + bytesNeeded))) << 72)
+      // Shift past the unnecessary bytes
+      | (nonce * nonceIsString) << (72 - bitsNeeded);
 
       // Store this to the scratch space
       bytes memory rlp;
@@ -465,8 +476,8 @@ contract Router is IRouterWithoutCollisions {
   /// @notice Execute some arbitrary code within a secure sandbox
   /**
    * @dev This performs sandboxing by deploying this code with `CREATE`. This is an external
-   *   function as we can't meter `CREATE`/internal functions. We work around this by calling this
-   *   function with `CALL` (which we can meter). This does forward `msg.value` to the newly
+   *  function as we can't meter `CREATE`/internal functions. We work around this by calling this
+   *  function with `CALL` (which we can meter). This does forward `msg.value` to the newly
    *  deployed contract.
    */
   /// @param code The code to execute
@@ -495,6 +506,8 @@ contract Router is IRouterWithoutCollisions {
    *  of CEI with `verifySignature` prevents replays, re-entrancy would allow out-of-order
    *  completion for the execution of batches (despite their in-order start of execution) which
    *  isn't a headache worth dealing with.
+   *
+   * Re-entrancy is also explicitly required due to how `_smartContractNonce` is handled.
    */
   // @param signature The signature by the current key for Serai's Ethereum validators
   // @param coin The coin all of these `OutInstruction`s are for
@@ -536,7 +549,7 @@ contract Router is IRouterWithoutCollisions {
             call the contract again.
 
             We use CREATE, not CREATE2, despite the difficulty in calculating the address
-            in-contract, for cost-savings reasons explained within `createAddress`'s documentation.
+            in-contract, for reasons explained within `createAddress`'s documentation.
           */
           address nextAddress = createAddress(_smartContractNonce);
           success = erc20TransferOut(nextAddress, coin, outs[i].amount);

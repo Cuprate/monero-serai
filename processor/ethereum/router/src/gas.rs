@@ -23,8 +23,9 @@ const CHAIN_ID: U256 = U256::from_be_slice(&[1]);
 pub(crate) type GasEstimator = Evm<'static, (), InMemoryDB>;
 
 impl Router {
-  const NONCE_STORAGE_SLOT: U256 = U256::from_be_slice(&[0]);
-  const SERAI_KEY_STORAGE_SLOT: U256 = U256::from_be_slice(&[2]);
+  const SMART_CONTRACT_NONCE_STORAGE_SLOT: U256 = U256::from_be_slice(&[0]);
+  const NONCE_STORAGE_SLOT: U256 = U256::from_be_slice(&[1]);
+  const SERAI_KEY_STORAGE_SLOT: U256 = U256::from_be_slice(&[3]);
 
   // Gas allocated for ERC20 calls
   #[cfg(test)]
@@ -46,11 +47,11 @@ impl Router {
     the correct set of prices for the network they're operating on.
   */
   /// The gas used by `confirmSeraiKey`.
-  pub const CONFIRM_NEXT_SERAI_KEY_GAS: u64 = 57_764;
+  pub const CONFIRM_NEXT_SERAI_KEY_GAS: u64 = 57_736;
   /// The gas used by `updateSeraiKey`.
-  pub const UPDATE_SERAI_KEY_GAS: u64 = 60_073;
+  pub const UPDATE_SERAI_KEY_GAS: u64 = 60_045;
   /// The gas used by `escapeHatch`.
-  pub const ESCAPE_HATCH_GAS: u64 = 44_037;
+  pub const ESCAPE_HATCH_GAS: u64 = 61_094;
 
   /// The key to use when performing gas estimations.
   ///
@@ -88,6 +89,15 @@ impl Router {
           code: Some(bytecode),
         },
       );
+
+      // Insert the value for _smartContractNonce set in the constructor
+      // All operations w.r.t. execute in constant-time, making the actual value irrelevant
+      db.insert_account_storage(
+        self.address,
+        Self::SMART_CONTRACT_NONCE_STORAGE_SLOT,
+        U256::from(1),
+      )
+      .unwrap();
 
       // Insert a non-zero nonce, as the zero nonce will update to the initial key and never be
       // used for any gas estimations of `execute`, the only function estimated

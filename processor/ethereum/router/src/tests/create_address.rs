@@ -56,42 +56,30 @@ async fn test_create_address() {
   // The only meaningful patterns are < 0x80, == 0x80, and then each length greater > 0x80
   // The following covers all three
   let mut nonce = 1u64;
+  let mut gas = None;
   while nonce.checked_add(nonce).is_some() {
+    let input =
+      (abi::CreateAddress::createAddressForSelfCall { nonce: U256::from(nonce) }).abi_encode();
+
+    // Make sure the function works as expected
+    let call =
+      TransactionRequest::default().to(address).input(TransactionInput::new(input.clone().into()));
     assert_eq!(
-      &test
-        .provider
-        .call(
-          &TransactionRequest::default().to(address).input(TransactionInput::new(
-            (abi::CreateAddress::createAddressForSelfCall { nonce: U256::from(nonce) })
-              .abi_encode()
-              .into()
-          ))
-        )
-        .await
-        .unwrap()
-        .as_ref()[12 ..],
+      &test.provider.call(&call).await.unwrap().as_ref()[12 ..],
       address.create(nonce).as_slice(),
     );
+
+    // Check the function is constant-gas
+    let gas_used = test.provider.estimate_gas(&call).await.unwrap();
+    let initial_gas = calculate_initial_tx_gas(SpecId::CANCUN, &input, false, &[], 0).initial_gas;
+    let this_call = gas_used - initial_gas;
+    if gas.is_none() {
+      gas = Some(this_call);
+    }
+    assert_eq!(gas, Some(this_call));
+
     nonce <<= 1;
   }
 
-  let input =
-    (abi::CreateAddress::createAddressForSelfCall { nonce: U256::from(u64::MAX) }).abi_encode();
-  let gas = test
-    .provider
-    .estimate_gas(
-      &TransactionRequest::default().to(address).input(TransactionInput::new(input.clone().into())),
-    )
-    .await
-    .unwrap() -
-    calculate_initial_tx_gas(SpecId::CANCUN, &input, false, &[], 0).initial_gas;
-
-  let keccak256_gas_estimate = |len: u64| 30 + (6 * len.div_ceil(32));
-  let mut bytecode_len = 0;
-  while (keccak256_gas_estimate(bytecode_len) + keccak256_gas_estimate(85)) < gas {
-    bytecode_len += 32;
-  }
-  println!(
-    "Worst-case createAddress gas: {gas}, CREATE2 break-even is bytecode of length {bytecode_len}",
-  );
+  println!("createAddress gas: {}", gas.unwrap());
 }

@@ -32,6 +32,17 @@ fn main() {
     &artifacts_path,
   )
   .unwrap();
+  // These are detected multiple times and distinguished, hence their renaming to canonical forms
+  fs::rename(
+    artifacts_path.clone() + "/Router_sol_Router.bin",
+    artifacts_path.clone() + "/Router.bin",
+  )
+  .unwrap();
+  fs::rename(
+    artifacts_path.clone() + "/Router_sol_Router.bin-runtime",
+    artifacts_path.clone() + "/Router.bin-runtime",
+  )
+  .unwrap();
 
   // This cannot be handled with the sol! macro. The Router requires an import
   // https://github.com/alloy-rs/core/issues/602
@@ -44,11 +55,16 @@ fn main() {
     &(artifacts_path.clone() + "/router.rs"),
   );
 
+  let test_artifacts_path = artifacts_path + "/tests";
+  if !fs::exists(&test_artifacts_path).unwrap() {
+    fs::create_dir(&test_artifacts_path).unwrap();
+  }
+
   // Build the test contracts
   build_solidity_contracts::build(
     &["../../../networks/ethereum/schnorr/contracts", "../erc20/contracts", "contracts"],
     "contracts/tests",
-    &(artifacts_path + "/tests"),
+    &test_artifacts_path,
   )
   .unwrap();
 }

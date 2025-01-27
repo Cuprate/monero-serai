@@ -5,7 +5,7 @@ import "Router.sol";
 
 // Wrap the Router with a contract which exposes the address
 contract CreateAddress is Router {
-  constructor() Router(bytes32(uint256(1))) {}
+  constructor() Router(bytes32(uint256(1))) { }
 
   function createAddressForSelf(uint256 nonce) external returns (address) {
     return Router.createAddress(nonce);
