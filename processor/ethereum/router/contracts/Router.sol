@@ -22,6 +22,15 @@ import "IRouter.sol";
   The `execute` function pays a relayer, as expected for use in the account-abstraction model. Other
   functions also expect relayers, yet do not explicitly pay fees. Those calls are expected to be
   justified via the backpressure of transactions with fees.
+
+  We do transfer ERC20s to contracts before their successful deployment. The usage of CREATE should
+  prevent deployment failures premised on address collisions, leaving failures to be failures with
+  the user-provided code/gas limit. Those failures are deemed to be the user's fault. Alternative
+  designs not only have increased overhead yet their own concerns around complexity (the Router
+  calling itself via msg.sender), justifying this as acceptable.
+
+  Historically, the call-stack-depth limit would've made this design untenable. Due to EIP-150, even
+  with 1 billion gas transactions, the call-stack-depth limit remains unreachable.
 */
 // slither-disable-start low-level-calls,unchecked-lowlevel
 
