@@ -703,53 +703,56 @@ async fn test_erc20_top_level_transfer_in_instruction() {
   test.publish_in_instruction_tx(tx, coin, amount, &shorthand).await;
 }
 
+// Code which returns true
+#[rustfmt::skip]
+fn return_true_code() -> Vec<u8> {
+  vec![
+    0x60, // push 1 byte                    | 3 gas
+    0x01, // the value 1
+    0x5f, // push 0                         | 2 gas
+    0x52, // mstore to offset 0 the value 1 | 3 gas
+    0x60, // push 1 byte                    | 3 gas
+    0x20, // the value 32
+    0x5f, // push 0                         | 2 gas
+    0xf3, // return from offset 0 1 word    | 0 gas
+    // 13 gas for the execution plus a single word of memory for 16 gas total
+  ]
+}
+
 #[tokio::test]
 async fn test_empty_execute() {
   let mut test = Test::new().await;
   test.confirm_next_serai_key().await;
 
   {
+    let gas = test.router.execute_gas(Coin::Ether, U256::from(1), &[].as_slice().into());
+    let fee = U256::from(gas);
+
     let () = test
       .provider
-      .raw_request("anvil_setBalance".into(), (test.router.address(), 100_000))
+      .raw_request("anvil_setBalance".into(), (test.router.address(), fee))
       .await
       .unwrap();
 
-    let gas = test.router.execute_gas(Coin::Ether, U256::from(1), &[].as_slice().into());
-    let fee = U256::from(gas);
     let (tx, gas_used) = test.execute(Coin::Ether, fee, [].as_slice().into(), vec![]).await;
     // We don't use the call gas stipend here
     const UNUSED_GAS: u64 = revm::interpreter::gas::CALL_STIPEND;
     assert_eq!(gas_used + UNUSED_GAS, gas);
 
-    assert_eq!(
-      test.provider.get_balance(test.router.address()).await.unwrap(),
-      U256::from(100_000 - gas)
-    );
+    assert_eq!(test.provider.get_balance(test.router.address()).await.unwrap(), U256::from(0));
     let minted_to_sender = u128::from(tx.tx().gas_limit) * tx.tx().gas_price;
     let spent_by_sender = u128::from(gas_used) * tx.tx().gas_price;
     assert_eq!(
       test.provider.get_balance(tx.recover_signer().unwrap()).await.unwrap() -
         U256::from(minted_to_sender - spent_by_sender),
-      U256::from(gas)
+      U256::from(fee)
     );
   }
 
   {
     let token = Address::from([0xff; 20]);
     {
-      #[rustfmt::skip]
-      let code = vec![
-        0x60, // push 1 byte                    | 3 gas
-        0x01, // the value 1
-        0x5f, // push 0                         | 2 gas
-        0x52, // mstore to offset 0 the value 1 | 3 gas
-        0x60, // push 1 byte                    | 3 gas
-        0x20, // the value 32
-        0x5f, // push 0                         | 2 gas
-        0xf3, // return from offset 0 1 word    | 0 gas
-        // 13 gas for the execution plus a single word of memory for 16 gas total
-      ];
+      let code = return_true_code();
       // Deploy our 'token'
       let () = test.provider.raw_request("anvil_setCode".into(), (token, code)).await.unwrap();
       let call =
@@ -759,7 +762,7 @@ async fn test_empty_execute() {
         test.provider.call(&call).await.unwrap().as_ref(),
         U256::from(1).abi_encode().as_slice()
       );
-      // Check it has the expected gas cost
+      // Check it has the expected gas cost (16 is documented in `return_true_code`)
       assert_eq!(test.provider.estimate_gas(&call).await.unwrap(), 21_000 + 16);
     }
 
@@ -778,11 +781,6 @@ async fn test_empty_execute() {
 async fn test_eth_address_out_instruction() {
   let mut test = Test::new().await;
   test.confirm_next_serai_key().await;
-  let () = test
-    .provider
-    .raw_request("anvil_setBalance".into(), (test.router.address(), 100_000))
-    .await
-    .unwrap();
 
   let mut rand_address = [0xff; 20];
   OsRng.fill_bytes(&mut rand_address);
@@ -792,14 +790,18 @@ async fn test_eth_address_out_instruction() {
 
   let gas = test.router.execute_gas(Coin::Ether, U256::from(1), &out_instructions);
   let fee = U256::from(gas);
+
+  let () = test
+    .provider
+    .raw_request("anvil_setBalance".into(), (test.router.address(), amount_out + fee))
+    .await
+    .unwrap();
+
   let (tx, gas_used) = test.execute(Coin::Ether, fee, out_instructions, vec![true]).await;
   const UNUSED_GAS: u64 = 2 * revm::interpreter::gas::CALL_STIPEND;
   assert_eq!(gas_used + UNUSED_GAS, gas);
 
-  assert_eq!(
-    test.provider.get_balance(test.router.address()).await.unwrap(),
-    U256::from(100_000) - amount_out - fee
-  );
+  assert_eq!(test.provider.get_balance(test.router.address()).await.unwrap(), U256::from(0));
   let minted_to_sender = u128::from(tx.tx().gas_limit) * tx.tx().gas_price;
   let spent_by_sender = u128::from(gas_used) * tx.tx().gas_price;
   assert_eq!(
@@ -850,12 +852,11 @@ async fn test_eth_code_out_instruction() {
     .await
     .unwrap();
 
-  let mut rand_address = [0xff; 20];
-  OsRng.fill_bytes(&mut rand_address);
+  let code = return_true_code();
   let amount_out = U256::from(2);
   let out_instructions = OutInstructions::from(
     [(
-      SeraiEthereumAddress::Contract(ContractDeployment::new(50_000, vec![]).unwrap()),
+      SeraiEthereumAddress::Contract(ContractDeployment::new(50_000, code.clone()).unwrap()),
       amount_out,
     )]
     .as_slice(),
@@ -881,7 +882,10 @@ async fn test_eth_code_out_instruction() {
       U256::from(minted_to_sender - spent_by_sender),
     U256::from(fee)
   );
-  assert_eq!(test.provider.get_balance(test.router.address().create(1)).await.unwrap(), amount_out);
+  let deployed = test.router.address().create(1);
+  assert_eq!(test.provider.get_balance(deployed).await.unwrap(), amount_out);
+  // The init code we use returns true, which will become the deployed contract's code
+  assert_eq!(test.provider.get_code_at(deployed).await.unwrap().to_vec(), true.abi_encode());
 }
 
 #[tokio::test]
@@ -892,15 +896,11 @@ async fn test_erc20_code_out_instruction() {
   let erc20 = Erc20::deploy(&test).await;
   let coin = Coin::Erc20(erc20.address());
 
-  let mut rand_address = [0xff; 20];
-  OsRng.fill_bytes(&mut rand_address);
+  let code = return_true_code();
   let amount_out = U256::from(2);
   let out_instructions = OutInstructions::from(
-    [(
-      SeraiEthereumAddress::Contract(ContractDeployment::new(50_000, vec![]).unwrap()),
-      amount_out,
-    )]
-    .as_slice(),
+    [(SeraiEthereumAddress::Contract(ContractDeployment::new(50_000, code).unwrap()), amount_out)]
+      .as_slice(),
   );
 
   let gas = test.router.execute_gas(coin, U256::from(1), &out_instructions);
@@ -916,7 +916,9 @@ async fn test_erc20_code_out_instruction() {
 
   assert_eq!(erc20.balance_of(&test, test.router.address()).await, U256::from(0));
   assert_eq!(erc20.balance_of(&test, tx.recover_signer().unwrap()).await, U256::from(fee));
-  assert_eq!(erc20.balance_of(&test, test.router.address().create(1)).await, amount_out);
+  let deployed = test.router.address().create(1);
+  assert_eq!(erc20.balance_of(&test, deployed).await, amount_out);
+  assert_eq!(test.provider.get_code_at(deployed).await.unwrap().to_vec(), true.abi_encode());
 }
 
 #[tokio::test]
