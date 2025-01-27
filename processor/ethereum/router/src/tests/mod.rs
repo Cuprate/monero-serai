@@ -41,6 +41,9 @@ use crate::{
 };
 
 mod constants;
+
+mod create_address;
+
 mod erc20;
 use erc20::Erc20;
 

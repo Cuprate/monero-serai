@@ -414,7 +414,7 @@ contract Router is IRouterWithoutCollisions {
    *   detrimental to other `OutInstruction`s within the same batch) is sufficiently concerning to
    *   justify this.
    */
-  function createAddress(uint256 nonce) private view returns (address) {
+  function createAddress(uint256 nonce) internal view returns (address) {
     unchecked {
       /*
         The hashed RLP-encoding is:
@@ -438,9 +438,10 @@ contract Router is IRouterWithoutCollisions {
           bitsNeeded += 8;
         }
         uint256 bytesNeeded = bitsNeeded / 8;
-        rlpEncodingLen = 22 + bytesNeeded;
+        // 22 + 1 + the amount of bytes needed
+        rlpEncodingLen = 23 + bytesNeeded;
         // Shift from byte 31 to byte 22
-        rlpEncoding |= 0x80 + (bytesNeeded << 72);
+        rlpEncoding |= (0x80 + bytesNeeded) << 72;
         // Shift past the unnecessary bytes
         rlpEncoding |= nonce << (72 - bitsNeeded);
       }

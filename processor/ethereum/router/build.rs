@@ -45,5 +45,10 @@ fn main() {
   );
 
   // Build the test contracts
-  build_solidity_contracts::build(&[], "contracts/tests", &(artifacts_path + "/tests")).unwrap();
+  build_solidity_contracts::build(
+    &["../../../networks/ethereum/schnorr/contracts", "../erc20/contracts", "contracts"],
+    "contracts/tests",
+    &(artifacts_path + "/tests"),
+  )
+  .unwrap();
 }
