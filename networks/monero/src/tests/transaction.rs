@@ -254,7 +254,7 @@ fn clsag() {
   for data in out_data {
     let mut ring = vec![];
     for out in &data {
-      ring.push([point(&out.key), point(&out.mask)]);
+      ring.push([compressed_point(&out.key), compressed_point(&out.mask)]);
     }
     rings.push(ring)
   }
@@ -279,7 +279,12 @@ fn clsag() {
       RctPrunable::Clsag { bulletproof: _, clsags, .. } => {
         for (i, cls) in clsags.iter().enumerate() {
           cls
-            .verify(&rings[i], &key_images[i], &pseudo_outs[i], &tx.signature_hash().unwrap())
+            .verify(
+              rings[i].clone(),
+              &key_images[i],
+              &pseudo_outs[i],
+              &tx.signature_hash().unwrap(),
+            )
             .unwrap();
         }
       }

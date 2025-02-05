@@ -345,7 +345,12 @@ impl Clsag {
       nonce.zeroize();
 
       debug_assert!(clsag
-        .verify(inputs[i].1.decoys.ring(), &key_images[i].compress(), &pseudo_out.compress(), &msg)
+        .verify(
+          inputs[i].1.decoys.ring().iter().map(|r| [r[0].compress(), r[1].compress()]).collect(),
+          &key_images[i].compress(),
+          &pseudo_out.compress(),
+          &msg
+        )
         .is_ok());
 
       res.push((clsag, pseudo_out));
@@ -357,7 +362,7 @@ impl Clsag {
   /// Verify a CLSAG signature for the provided context.
   pub fn verify(
     &self,
-    ring: &[[EdwardsPoint; 2]],
+    ring: Vec<[CompressedEdwardsY; 2]>,
     I: &CompressedEdwardsY,
     pseudo_out: &CompressedEdwardsY,
     msg: &[u8; 32],
@@ -387,7 +392,13 @@ impl Clsag {
       return Err(ClsagError::InvalidCommitment);
     };
 
-    let (_, c1) = core(ring, &I, &pseudo_out, msg, &D, &self.s, &Mode::Verify(self.c1));
+    let ring = ring
+      .into_iter()
+      .map(|r| Some([decompress_point(r[0])?, decompress_point(r[1])?]))
+      .collect::<Option<Vec<_>>>()
+      .ok_or(ClsagError::InvalidRing)?;
+
+    let (_, c1) = core(&ring, &I, &pseudo_out, msg, &D, &self.s, &Mode::Verify(self.c1));
     if c1 != self.c1 {
       Err(ClsagError::InvalidC1)?;
     }

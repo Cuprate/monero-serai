@@ -95,14 +95,14 @@ impl BorromeanRange {
 
   /// Verify the commitment contains a 64-bit value.
   #[must_use]
-  pub fn verify(&self, commitment: &EdwardsPoint) -> bool {
+  pub fn verify(&self, commitment: &CompressedEdwardsY) -> bool {
     let Some(bit_commitments) =
       self.bit_commitments.iter().copied().map(decompress_point).collect::<Option<Vec<_>>>()
     else {
       return false;
     };
 
-    if &bit_commitments.iter().sum::<EdwardsPoint>() != commitment {
+    if &bit_commitments.iter().sum::<EdwardsPoint>().compress() != commitment {
       return false;
     }
 
