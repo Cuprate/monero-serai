@@ -12,8 +12,7 @@ use std_shims::{
 
 use zeroize::Zeroize;
 
-use curve25519_dalek::{traits::IsIdentity, Scalar, EdwardsPoint};
-use curve25519_dalek::edwards::CompressedEdwardsY;
+use curve25519_dalek::{traits::IsIdentity, Scalar, EdwardsPoint, edwards::CompressedEdwardsY};
 use monero_io::*;
 use monero_generators::{H, hash_to_point};
 use monero_primitives::keccak256_to_scalar;
@@ -142,9 +141,15 @@ impl Mlsag {
 
     let mut ci = self.cc;
 
+    let Some(key_images) =
+      key_images.into_iter().map(|p| decompress_point(*p)).collect::<Option<Vec<_>>>()
+    else {
+      return Err(MlsagError::InvalidKeyImage);
+    };
+
     // This is an iterator over the key images as options with an added entry of `None` at the
     // end for the non-linkable layer
-    let key_images_iter = key_images.iter().map(|ki| Some(*ki)).chain(core::iter::once(None));
+    let key_images_iter = key_images.iter().map(Some).chain(core::iter::once(None));
 
     if ring.matrix.len() != self.ss.len() {
       Err(MlsagError::InvalidSs)?;
@@ -166,8 +171,6 @@ impl Mlsag {
         // Not all dimensions need to be linkable, e.g. commitments, and only linkable layers need
         // to have key images.
         if let Some(ki) = ki {
-          let ki = decompress_point(ki).ok_or(MlsagError::InvalidKeyImage)?;
-
           if ki.is_identity() || (!ki.is_torsion_free()) {
             Err(MlsagError::InvalidKeyImage)?;
           }
