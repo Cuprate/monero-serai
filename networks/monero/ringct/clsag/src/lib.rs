@@ -101,17 +101,11 @@ fn core(
   I: &EdwardsPoint,
   pseudo_out: &EdwardsPoint,
   msg: &[u8; 32],
-  D: &EdwardsPoint,
+  D_INV_EIGHT: &CompressedEdwardsY,
   s: &[Scalar],
   A_c1: &Mode,
-) -> ((CompressedEdwardsY, Scalar, Scalar), Scalar) {
+) -> Result<((CompressedEdwardsY, Scalar, Scalar), Scalar), ClsagError> {
   let n = ring.len();
-
-  let images_precomp = match A_c1 {
-    Mode::Sign(..) => None,
-    Mode::Verify(..) => Some(VartimeEdwardsPrecomputation::new([I, D])),
-  };
-  let D_INV_EIGHT = D * INV_EIGHT();
 
   // Generate the transcript
   // Instead of generating multiple, a single transcript is created and then edited as needed
@@ -140,7 +134,7 @@ fn core(
   }
 
   to_hash.extend(I.compress().to_bytes());
-  to_hash.extend(D_INV_EIGHT.compress().to_bytes());
+  to_hash.extend(D_INV_EIGHT.to_bytes());
   to_hash.extend(pseudo_out.compress().to_bytes());
   // mu_P with agg_0
   let mu_P = keccak256_to_scalar(&to_hash);
@@ -178,6 +172,18 @@ fn core(
     }
   }
 
+  let D = decompress_point(*D_INV_EIGHT)
+    .map(|p| EdwardsPoint::mul_by_cofactor(&p))
+    .ok_or(ClsagError::InvalidD)?;
+  if D.is_identity() {
+    Err(ClsagError::InvalidD)?;
+  }
+
+  let images_precomp = match A_c1 {
+    Mode::Sign(..) => None,
+    Mode::Verify(..) => Some(VartimeEdwardsPrecomputation::new([I, &D])),
+  };
+
   // Perform the core loop
   let mut c1 = c;
   for i in (start .. end).map(|i| i % n) {
@@ -198,7 +204,7 @@ fn core(
 
     // (c_p * I) + (c_c * D) + (s_i * PH)
     let R = match A_c1 {
-      Mode::Sign(..) => EdwardsPoint::multiscalar_mul([c_p, c_c, s[i]], [I, D, &PH]),
+      Mode::Sign(..) => EdwardsPoint::multiscalar_mul([c_p, c_c, s[i]], [I, &D, &PH]),
       Mode::Verify(..) => {
         images_precomp.as_ref().unwrap().vartime_mixed_multiscalar_mul([c_p, c_c], [s[i]], [PH])
       }
@@ -216,7 +222,7 @@ fn core(
   }
 
   // This first tuple is needed to continue signing, the latter is the c to be tested/worked with
-  ((D_INV_EIGHT.compress(), c * mu_P, c * mu_C), c1)
+  Ok(((*D_INV_EIGHT, c * mu_P, c * mu_C), c1))
 }
 
 /// The CLSAG signature, as used in Monero.
@@ -260,8 +266,16 @@ impl Clsag {
     for _ in 0 .. input.decoys.ring().len() {
       s.push(Scalar::random(rng));
     }
-    let ((D, c_p, c_c), c1) =
-      core(input.decoys.ring(), I, &pseudo_out, msg, &D, &s, &Mode::Sign(r, A, AH));
+    let ((D, c_p, c_c), c1) = core(
+      input.decoys.ring(),
+      I,
+      &pseudo_out,
+      msg,
+      &(D * INV_EIGHT()).compress(),
+      &s,
+      &Mode::Sign(r, A, AH),
+    )
+    .unwrap();
 
     ClsagSignCore {
       incomplete_clsag: Clsag { D, s, c1 },
@@ -381,13 +395,6 @@ impl Clsag {
       Err(ClsagError::InvalidImage)?;
     }
 
-    let D = decompress_point(self.D)
-      .map(|p| EdwardsPoint::mul_by_cofactor(&p))
-      .ok_or(ClsagError::InvalidD)?;
-    if D.is_identity() {
-      Err(ClsagError::InvalidD)?;
-    }
-
     let Some(pseudo_out) = decompress_point(*pseudo_out) else {
       return Err(ClsagError::InvalidCommitment);
     };
@@ -398,7 +405,7 @@ impl Clsag {
       .collect::<Option<Vec<_>>>()
       .ok_or(ClsagError::InvalidRing)?;
 
-    let (_, c1) = core(&ring, &I, &pseudo_out, msg, &D, &self.s, &Mode::Verify(self.c1));
+    let (_, c1) = core(&ring, &I, &pseudo_out, msg, &self.D, &self.s, &Mode::Verify(self.c1))?;
     if c1 != self.c1 {
       Err(ClsagError::InvalidC1)?;
     }
