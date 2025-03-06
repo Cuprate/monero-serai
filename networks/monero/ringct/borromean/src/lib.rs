@@ -5,7 +5,10 @@
 #![allow(non_snake_case)]
 
 use core::fmt::Debug;
-use std_shims::io::{self, Read, Write};
+use std_shims::{
+  io::{self, Read, Write},
+  vec::Vec,
+};
 
 use zeroize::Zeroize;
 
